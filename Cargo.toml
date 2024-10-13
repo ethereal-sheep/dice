@@ -1,0 +1,22 @@
+[package]
+name = "dice"
+version = "0.1.0"
+edition = "2021"
+description = "Easy dice PRNG with an easy to understand/parse script"
+repository = "https://github.com/ethereal-sheep/dice"
+license = "MIT OR Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "dice"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dice"
+path = "src/bin.rs"
+
+[dependencies]
+clap = "4.5.20"
+owo-colors = "4.1.0"
+rand = "0.8.5"

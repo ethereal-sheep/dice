@@ -41,11 +41,11 @@ static TOKENIZERS: &[MatchTokenFn] = &[
                         return Some(Token::Dice(value, rhs));
                     }
                 }
-                Some('$') => {
+                Some('a' | 'A') => {
                     chars.next();
                     return Some(Token::Advantage(value));
                 }
-                Some('!') => {
+                Some('z' | 'Z') => {
                     chars.next();
                     return Some(Token::Disadvantage(value));
                 }
@@ -88,14 +88,14 @@ static TOKENIZERS: &[MatchTokenFn] = &[
     },
     |chars| {
         // advantage
-        if let Some('$') = chars.next() {
+        if let Some('a' | 'A') = chars.next() {
             return Some(Token::Advantage(1));
         }
         None
     },
     |chars| {
         // disadvantage
-        if let Some('!') = chars.next() {
+        if let Some('z' | 'Z') = chars.next() {
             return Some(Token::Disadvantage(1));
         }
         None

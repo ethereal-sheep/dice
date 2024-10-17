@@ -242,7 +242,7 @@ impl Iterator for Tokenizer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    static BASE_DICE_STRING: &str = "123 + 2p(123,!4d2, d8, 4d4d4)";
+    static BASE_DICE_STRING: &str = "123 + 2p(123,z4d2, d8, 4d4d4)";
 
     #[test]
     fn test_tokenizer_next() {

@@ -6,6 +6,8 @@ mod inner;
 use core::fmt;
 use std::str::FromStr;
 
+use inner::grammar::{GrammarTestOptions, TestDetails};
+
 use crate::inner::grammar::{ExecDetails, Grammar, GrammarError, GrammarExecOptions};
 
 #[derive(Debug, Clone)]
@@ -44,6 +46,21 @@ impl From<RollOptions> for GrammarExecOptions {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TestOptions {
+    pub is_debug: bool,
+    pub test_size: usize,
+}
+
+impl From<TestOptions> for GrammarTestOptions {
+    fn from(options: TestOptions) -> Self {
+        Self {
+            is_debug: options.is_debug,
+            test_size: options.test_size,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Dice {
     grammar: Grammar,
@@ -59,9 +76,17 @@ impl Dice {
     pub fn roll(
         &self,
         rng: &mut impl rand::Rng,
-        options: &RollOptions,
+        options: RollOptions,
     ) -> Result<ExecDetails, String> {
-        self.grammar.exec(rng, options.clone().into())
+        self.grammar.exec(rng, options.into())
+    }
+
+    pub fn test(
+        &self,
+        rng: &mut (impl rand::Rng + Clone),
+        options: TestOptions,
+    ) -> Result<TestDetails, String> {
+        self.grammar.test(rng, options.into())
     }
 }
 
@@ -94,7 +119,7 @@ mod tests {
                 println!("{}", dice);
                 println!(
                     "{:?}",
-                    dice.roll(&mut thread_rng(), &RollOptions { is_debug: true })
+                    dice.roll(&mut thread_rng(), RollOptions { is_debug: true })
                 );
             }
             Err(err) => println!("{}", err),

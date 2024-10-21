@@ -193,6 +193,50 @@ pub fn main() {
                                 *matches.get_one::<u64>("height").unwrap_or(&10) as usize,
                                 matches.get_one("reference").copied(),
                             );
+
+                            let percentiles = Percentiles::from_data(result.output);
+                            println!(
+                                "0%: {:?}",
+                                percentiles
+                                    .get_percentile_by_percentage(0, PercentileCompare::Greater)
+                            );
+                            println!(
+                                "0.1%: {:?}",
+                                percentiles
+                                    .get_percentile_by_percentage(0.1, PercentileCompare::Greater)
+                            );
+                            println!(
+                                "25%: {:?}",
+                                percentiles
+                                    .get_percentile_by_percentage(25, PercentileCompare::Greater)
+                            );
+                            println!(
+                                "50%: {:?}",
+                                percentiles
+                                    .get_percentile_by_percentage(50, PercentileCompare::Greater)
+                            );
+                            println!(
+                                "75%: {:?}",
+                                percentiles
+                                    .get_percentile_by_percentage(75, PercentileCompare::Greater)
+                            );
+                            println!(
+                                "99%: {:?}",
+                                percentiles
+                                    .get_percentile_by_percentage(99, PercentileCompare::Greater)
+                            );
+                            println!(
+                                "99.9%: {:?}",
+                                percentiles
+                                    .get_percentile_by_percentage(99.9, PercentileCompare::Greater)
+                            );
+                            println!(
+                                "99.99%: {:?}",
+                                percentiles.get_percentile_by_percentage(
+                                    99.99,
+                                    PercentileCompare::Greater
+                                )
+                            );
                         }
                         Err(err) => println!("{:>start_width$} {}", "Error".red().bold(), err),
                     }
@@ -648,59 +692,77 @@ impl Buckets {
 
 #[derive(Debug, Clone)]
 struct Percentile {
+    first: i64,
     value: i64,
+    last: i64,
     size: usize,
     greater_than_count: usize,
     data_size: usize,
 }
 
 impl Percentile {
+    fn size(&self) -> usize {
+        self.size
+    }
+
+    fn greater_than_count(&self) -> usize {
+        self.greater_than_count
+    }
+
+    fn less_than_count(&self) -> usize {
+        self.data_size - self.greater_than_count - self.size
+    }
+
     fn greater_than_percentage(&self) -> f64 {
-        self.greater_than_count as f64 / self.data_size as f64 * 100f64
+        self.greater_than_count() as f64 / self.data_size as f64 * 100f64
     }
 
     fn less_than_percentage(&self) -> f64 {
-        (self.data_size - self.greater_than_count - self.size) as f64 / self.data_size as f64
-            * 100f64
+        self.less_than_count() as f64 / self.data_size as f64 * 100f64
     }
 }
-
-#[derive(Debug, Clone)]
-struct PercentileRange {
-    start: i64,
-    end: i64,
-    size: usize,
-    data_size: usize,
-}
-
-impl PercentileRange {}
 
 #[derive(Debug, Clone)]
 struct Percentiles {
     percentiles: Vec<Percentile>,
     data_size: usize,
+    first: i64,
+    last: i64,
+}
+
+enum PercentileCompare {
+    Greater,
+    Less,
 }
 
 impl Percentiles {
     fn from_data(mut data: Vec<i64>) -> Self {
         data.sort();
         let data_size = data.len();
-        let mut percentiles: Vec<Percentile> = vec![];
-        for (i, value) in data.into_iter().enumerate() {
-            if percentiles.is_empty() || percentiles.last().unwrap().value != value {
-                percentiles.push(Percentile {
-                    value,
-                    size: 0,
-                    greater_than_count: i,
-                    data_size,
-                });
+
+        let mut percentiles: Vec<(i64, usize, usize)> = vec![];
+        for (i, value) in data.iter().enumerate() {
+            if percentiles.is_empty() || percentiles.last().unwrap().0 != *value {
+                percentiles.push((*value, 0, i));
             }
-            percentiles.last_mut().unwrap().size += 1;
+            percentiles.last_mut().unwrap().1 += 1;
         }
 
         Self {
-            percentiles,
+            percentiles: percentiles
+                .into_iter()
+                .map(|(value, size, greater_than_count)| Percentile {
+                    value,
+                    size,
+                    greater_than_count,
+                    first: *data.first().unwrap(),
+                    last: *data.last().unwrap(),
+                    data_size,
+                })
+                .collect(),
             data_size,
+            first: *data.first().unwrap_or(&0),
+            last: *data.last().unwrap_or(&0),
         }
     }
 
@@ -713,6 +775,8 @@ impl Percentiles {
             .map_err(|i| {
                 if i == 0 {
                     return Percentile {
+                        first: self.first,
+                        last: self.last,
                         value,
                         size: 0,
                         greater_than_count: 0,
@@ -727,6 +791,8 @@ impl Percentiles {
                             p.clone()
                         } else {
                             Percentile {
+                                first: p.first,
+                                last: p.last,
                                 value,
                                 size: 0,
                                 greater_than_count: p.greater_than_count + p.size,
@@ -739,18 +805,29 @@ impl Percentiles {
             .unwrap_err()
     }
 
-    fn get_greater_range_by_percentage(&self, percentage: usize) -> Option<PercentileRange> {
-        if percentage >= 100 || self.percentiles.len() == 0 {
+    fn get_percentile_by_percentage(
+        &self,
+        percentage: impl Into<f64>,
+        cmp: PercentileCompare,
+    ) -> Option<Percentile> {
+        let percentage = percentage.into();
+        if percentage >= 100f64 || self.percentiles.len() == 0 {
             return None;
         }
 
-        let value = (percentage as f64 / 100f64 * self.data_size as f64).round() as usize;
+        let value = (percentage / 100f64 * self.data_size as f64).round() as usize;
 
         let idx = self
             .percentiles
-            .binary_search_by(|element| match element.greater_than_count.cmp(&value) {
-                Ordering::Equal => Ordering::Greater,
-                ord => ord,
+            .binary_search_by(|element| match cmp {
+                PercentileCompare::Greater => match element.greater_than_count().cmp(&value) {
+                    Ordering::Equal => Ordering::Greater,
+                    ord => ord,
+                },
+                PercentileCompare::Less => match value.cmp(&element.less_than_count()) {
+                    Ordering::Equal => Ordering::Greater,
+                    ord => ord,
+                },
             })
             .unwrap_err();
 
@@ -758,16 +835,7 @@ impl Percentiles {
             return None;
         }
 
-        self.percentiles
-            .get(idx)
-            .map(|l| self.percentiles.last().map(|r| (l, r)))
-            .flatten()
-            .map(|(l, r)| PercentileRange {
-                start: l.value,
-                end: r.value,
-                size: self.data_size - l.greater_than_count,
-                data_size: self.data_size,
-            })
+        self.percentiles.get(idx).cloned()
     }
 }
 
@@ -830,7 +898,9 @@ mod tests {
                 value: 1,
                 size: 2,
                 greater_than_count: 0,
-                data_size: 8
+                data_size: 8,
+                first: 1,
+                last: 5
             }
         );
         assert_matches!(
@@ -839,7 +909,9 @@ mod tests {
                 value: 3,
                 size: 2,
                 greater_than_count: 2,
-                data_size: 8
+                data_size: 8,
+                first: 1,
+                last: 5
             }
         );
         assert_matches!(
@@ -848,7 +920,9 @@ mod tests {
                 value: -1,
                 size: 0,
                 greater_than_count: 0,
-                data_size: 8
+                data_size: 8,
+                first: 1,
+                last: 5
             }
         );
         assert_matches!(
@@ -857,7 +931,9 @@ mod tests {
                 value: 2,
                 size: 0,
                 greater_than_count: 2,
-                data_size: 8
+                data_size: 8,
+                first: 1,
+                last: 5
             }
         );
         assert_matches!(
@@ -866,49 +942,115 @@ mod tests {
                 value: 6,
                 size: 0,
                 greater_than_count: 8,
-                data_size: 8
+                data_size: 8,
+                first: 1,
+                last: 5
             }
         );
     }
 
     #[test]
     fn test_percentiles_get_gt_by_percentage() {
-        let percentiles = Percentiles::from_data(vec![1, 1, 3, 3, 4, 4, 5, 5]);
+        let percentiles: Percentiles = Percentiles::from_data(vec![1, 1, 3, 3, 4, 4, 5, 5]);
         assert_matches!(
-            percentiles.get_greater_range_by_percentage(0),
-            Some(PercentileRange {
-                start: 1,
-                end: 5,
-                size: 8,
-                data_size: 8
-            })
-        );
-        assert_matches!(percentiles.get_greater_range_by_percentage(100), None);
-        assert_matches!(
-            percentiles.get_greater_range_by_percentage(50),
-            Some(PercentileRange {
-                start: 4,
-                end: 5,
-                size: 4,
-                data_size: 8
-            })
-        );
-        assert_matches!(
-            percentiles.get_greater_range_by_percentage(25),
-            Some(PercentileRange {
-                start: 3,
-                end: 5,
-                size: 6,
-                data_size: 8
-            })
-        );
-        assert_matches!(
-            percentiles.get_greater_range_by_percentage(75),
-            Some(PercentileRange {
-                start: 5,
-                end: 5,
+            percentiles.get_percentile_by_percentage(0, PercentileCompare::Greater),
+            Some(Percentile {
                 size: 2,
-                data_size: 8
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 1,
+                greater_than_count: 0
+            })
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(100, PercentileCompare::Greater),
+            None
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(50, PercentileCompare::Greater),
+            Some(Percentile {
+                size: 2,
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 4,
+                greater_than_count: 4
+            })
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(25, PercentileCompare::Greater),
+            Some(Percentile {
+                size: 2,
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 3,
+                greater_than_count: 2
+            })
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(75, PercentileCompare::Greater),
+            Some(Percentile {
+                size: 2,
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 5,
+                greater_than_count: 6
+            })
+        );
+    }
+
+    #[test]
+    fn test_percentiles_get_lt_by_percentage() {
+        let percentiles: Percentiles = Percentiles::from_data(vec![1, 1, 3, 3, 4, 4, 5, 5]);
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(0, PercentileCompare::Less),
+            Some(Percentile {
+                size: 2,
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 5,
+                greater_than_count: 6
+            })
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(100, PercentileCompare::Less),
+            None
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(50, PercentileCompare::Less),
+            Some(Percentile {
+                size: 2,
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 3,
+                greater_than_count: 2
+            })
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(25, PercentileCompare::Less),
+            Some(Percentile {
+                size: 2,
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 4,
+                greater_than_count: 4
+            })
+        );
+        assert_matches!(
+            percentiles.get_percentile_by_percentage(75, PercentileCompare::Less),
+            Some(Percentile {
+                size: 2,
+                data_size: 8,
+                first: 1,
+                last: 5,
+                value: 1,
+                greater_than_count: 0
             })
         );
     }

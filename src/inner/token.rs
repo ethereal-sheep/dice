@@ -26,7 +26,7 @@ static TOKENIZERS: &[MatchTokenFn] = &[
         if let Some('1'..='9') = chars.peek() {
             let mut value = 0u64;
             while let Some('0'..='9') = chars.peek() {
-                let x = chars.next().map(|c| c.to_digit(10)).flatten().unwrap() as u64;
+                let x = chars.next().and_then(|c| c.to_digit(10)).unwrap() as u64;
                 value = value * 10 + x;
             }
             match chars.peek() {
@@ -35,7 +35,7 @@ static TOKENIZERS: &[MatchTokenFn] = &[
                     if let Some('1'..='9') = chars.peek() {
                         let mut rhs = 0u64;
                         while let Some('0'..='9') = chars.peek() {
-                            let x = chars.next().map(|c| c.to_digit(10)).flatten().unwrap() as u64;
+                            let x = chars.next().and_then(|c| c.to_digit(10)).unwrap() as u64;
                             rhs = rhs * 10 + x;
                         }
                         return Some(Token::Dice(value, rhs));
@@ -120,7 +120,7 @@ static TOKENIZERS: &[MatchTokenFn] = &[
             if let Some('1'..='9') = chars.peek() {
                 let mut rhs = 0u64;
                 while let Some('0'..='9') = chars.peek() {
-                    let x = chars.next().map(|c| c.to_digit(10)).flatten().unwrap() as u64;
+                    let x = chars.next().and_then(|c| c.to_digit(10)).unwrap() as u64;
                     rhs = rhs * 10 + x;
                 }
                 return Some(Token::Dice(1, rhs));
@@ -220,7 +220,7 @@ impl Iterator for Tokenizer<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.lookahead.clone();
-        if !next.is_none() {
+        if next.is_some() {
             self.remove_white_space();
             self.lookahead = (|| {
                 for tokenizer in TOKENIZERS {

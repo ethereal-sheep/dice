@@ -3,7 +3,7 @@ use core::fmt;
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
 use std::{
-    io::{Stdout, Write},
+    io::Write,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -14,7 +14,7 @@ pub enum ExecOutput {
     Array(Vec<i64>),
 }
 
-fn vi_to_string(v: &Vec<i64>) -> String {
+fn vi_to_string(v: &[i64]) -> String {
     format!(
         "({})",
         v.iter()
@@ -25,14 +25,14 @@ fn vi_to_string(v: &Vec<i64>) -> String {
 }
 
 impl ExecOutput {
-    pub fn into_value(&self) -> i64 {
+    pub fn as_value(&self) -> i64 {
         match self {
             ExecOutput::Value(n) => *n,
-            ExecOutput::Array(vec) => vec.into_iter().fold(0, |a, b| a + b),
+            ExecOutput::Array(vec) => vec.iter().sum::<i64>(),
         }
     }
 
-    pub fn into_array(&self) -> Result<Vec<i64>, String> {
+    pub fn as_array(&self) -> Result<Vec<i64>, String> {
         match self {
             ExecOutput::Value(n) => Err(format!("Expected array, but got Value({}) instead", n)),
             ExecOutput::Array(vec) => Ok(vec.clone()),
@@ -88,8 +88,8 @@ pub struct ExecDetails {
 type ExecResultWithDetails = Result<ExecDetails, String>;
 
 impl ExecDetails {
-    pub fn into_value(&self) -> i64 {
-        self.output.into_value()
+    pub fn as_value(&self) -> i64 {
+        self.output.as_value()
     }
 }
 
@@ -123,7 +123,7 @@ impl fmt::Display for ExecDetails {
                     write!(f, "+(...) => ")?;
                 }
             }
-            write!(f, "{}", self.output.into_value().bold())
+            write!(f, "{}", self.output.as_value().bold())
         } else {
             write!(
                 f,
@@ -199,52 +199,61 @@ impl fmt::Display for TestDetails {
     }
 }
 
+type VoidExec = Box<dyn Fn(&mut dyn RngCore) -> ExecResult>;
+type VoidToString = Box<dyn Fn() -> String>;
+type UnaryNumberExec = Box<dyn Fn(i64, &mut dyn RngCore) -> ExecResult>;
+type UnaryNumberToString = Box<dyn Fn(i64) -> String>;
+type UnaryArrayExec = Box<dyn Fn(&Vec<i64>, &mut dyn RngCore) -> ExecResult>;
+type UnaryArrayToString = Box<dyn Fn(&Vec<i64>) -> String>;
+type BinaryExec = Box<dyn Fn(i64, i64, &mut dyn RngCore) -> ExecResult>;
+type BinaryToString = Box<dyn Fn(i64, i64) -> String>;
+
 pub(crate) enum GrammarRule {
-    AggregateOperator {
+    Aggregate {
         name: &'static str,
         children: Vec<GrammarRule>,
     },
-    NumberOperator {
+    Number {
         name: &'static str,
         number: i64,
     },
-    VoidOperator {
+    Void {
         name: &'static str,
         size: usize,
-        exec: Box<dyn Fn(&mut dyn RngCore) -> ExecResult>,
-        to_string: Box<dyn Fn() -> String>,
+        exec: VoidExec,
+        to_string: VoidToString,
     },
-    UnaryNumberOperator {
-        name: &'static str,
-        operation: String,
-        size: usize,
-        child: Box<GrammarRule>,
-        exec: Box<dyn Fn(i64, &mut dyn RngCore) -> ExecResult>,
-        to_string: Box<dyn Fn(i64) -> String>,
-    },
-    UnaryArrayOperator {
+    UnaryNumber {
         name: &'static str,
         operation: String,
         size: usize,
         child: Box<GrammarRule>,
-        exec: Box<dyn Fn(&Vec<i64>, &mut dyn RngCore) -> ExecResult>,
-        to_string: Box<dyn Fn(&Vec<i64>) -> String>,
+        exec: UnaryNumberExec,
+        to_string: UnaryNumberToString,
     },
-    BinaryOperator {
+    UnaryArray {
+        name: &'static str,
+        operation: String,
+        size: usize,
+        child: Box<GrammarRule>,
+        exec: UnaryArrayExec,
+        to_string: UnaryArrayToString,
+    },
+    Binary {
         name: &'static str,
         operation: String,
         size: usize,
         lhs: Box<GrammarRule>,
         rhs: Box<GrammarRule>,
-        exec: Box<dyn Fn(i64, i64, &mut dyn RngCore) -> ExecResult>,
-        to_string: Box<dyn Fn(i64, i64) -> String>,
+        exec: BinaryExec,
+        to_string: BinaryToString,
     },
 }
 
 impl fmt::Display for GrammarRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GrammarRule::AggregateOperator { name: _, children } => {
+            GrammarRule::Aggregate { name: _, children } => {
                 write!(f, "(")?;
                 for (i, child) in children.iter().enumerate() {
                     if i != 0usize {
@@ -254,14 +263,14 @@ impl fmt::Display for GrammarRule {
                 }
                 write!(f, ")")
             }
-            GrammarRule::NumberOperator { name: _, number } => write!(f, "{}", number),
-            GrammarRule::VoidOperator {
+            GrammarRule::Number { name: _, number } => write!(f, "{}", number),
+            GrammarRule::Void {
                 name: _,
                 size: _,
                 exec: _,
                 to_string,
             } => write!(f, "{}", to_string()),
-            GrammarRule::UnaryNumberOperator {
+            GrammarRule::UnaryNumber {
                 name,
                 operation: _,
                 size: _,
@@ -273,7 +282,7 @@ impl fmt::Display for GrammarRule {
                 child.fmt(f)?;
                 write!(f, ")")
             }
-            GrammarRule::UnaryArrayOperator {
+            GrammarRule::UnaryArray {
                 name,
                 operation: _,
                 size: _,
@@ -285,7 +294,7 @@ impl fmt::Display for GrammarRule {
                 child.fmt(f)?;
                 write!(f, ")")
             }
-            GrammarRule::BinaryOperator {
+            GrammarRule::Binary {
                 name,
                 operation: _,
                 size: _,
@@ -315,17 +324,19 @@ pub struct GrammarTestOptions {
     pub test_size: usize,
 }
 
+type StackExec = Rc<
+    dyn Fn(
+        &Vec<ExecOutput>,
+        &mut dyn rand::RngCore,
+        &GrammarExecOptions,
+    ) -> ExecResultWithLineDetail,
+>;
+
 #[derive(Clone)]
 struct StackFn {
     name: &'static str,
     operation: String,
-    exec: Rc<
-        dyn Fn(
-            &Vec<ExecOutput>,
-            &mut dyn rand::RngCore,
-            &GrammarExecOptions,
-        ) -> ExecResultWithLineDetail,
-    >,
+    exec: StackExec,
 }
 
 impl fmt::Display for StackFn {
@@ -342,21 +353,21 @@ impl fmt::Debug for StackFn {
 
 impl GrammarRule {
     fn num(num: u64) -> Self {
-        Self::NumberOperator {
+        Self::Number {
             name: "Num",
             number: num as i64,
         }
     }
 
     fn arr(children: Vec<Self>) -> Self {
-        Self::AggregateOperator {
+        Self::Aggregate {
             name: "Agg",
             children,
         }
     }
 
     fn sum(lhs: Self, rhs: Self) -> Self {
-        Self::BinaryOperator {
+        Self::Binary {
             name: "Sum",
             operation: ".. + ..".into(),
             size: 1,
@@ -368,7 +379,7 @@ impl GrammarRule {
     }
 
     fn sub(lhs: Self, rhs: Self) -> Self {
-        Self::BinaryOperator {
+        Self::Binary {
             name: "Sub",
             operation: ".. - ..".into(),
             size: 1,
@@ -380,7 +391,7 @@ impl GrammarRule {
     }
 
     fn mul(lhs: Self, rhs: Self) -> Self {
-        Self::BinaryOperator {
+        Self::Binary {
             name: "Mul",
             operation: ".. x ..".into(),
             size: 1,
@@ -392,7 +403,7 @@ impl GrammarRule {
     }
 
     fn adv(lhs: u64, rhs: Self) -> Self {
-        Self::UnaryArrayOperator {
+        Self::UnaryArray {
             name: "Adv",
             operation: format!("{}A(...)", lhs),
             size: lhs as usize,
@@ -417,7 +428,7 @@ impl GrammarRule {
     }
 
     fn dis(lhs: u64, rhs: Self) -> Self {
-        Self::UnaryArrayOperator {
+        Self::UnaryArray {
             name: "Dis",
             operation: format!("{}Z(...)", lhs),
             size: lhs as usize,
@@ -431,7 +442,7 @@ impl GrammarRule {
                     ));
                 }
                 let mut new = rhs.clone();
-                new.sort_by(|a, b| a.cmp(b));
+                new.sort();
                 while new.len() != new_size {
                     new.pop();
                 }
@@ -442,7 +453,7 @@ impl GrammarRule {
     }
 
     fn cho(lhs: u64, rhs: Self) -> Self {
-        Self::UnaryArrayOperator {
+        Self::UnaryArray {
             name: "Cho",
             size: lhs as usize,
             operation: format!("{}C(...)", lhs),
@@ -461,7 +472,7 @@ impl GrammarRule {
     }
 
     fn pic(lhs: u64, rhs: Self) -> Self {
-        Self::UnaryArrayOperator {
+        Self::UnaryArray {
             name: "Pic",
             operation: format!("{}P(...)", lhs),
             size: lhs as usize,
@@ -486,7 +497,7 @@ impl GrammarRule {
     }
 
     fn die(lhs: u64, rhs: u64) -> Self {
-        Self::VoidOperator {
+        Self::Void {
             name: "Die",
             size: lhs as usize,
             exec: Box::new(move |rng| {
@@ -509,7 +520,7 @@ impl GrammarRule {
     }
 
     fn neg(rhs: Self) -> Self {
-        Self::UnaryNumberOperator {
+        Self::UnaryNumber {
             name: "Neg",
             operation: "-(..)".into(),
             size: 1,
@@ -521,23 +532,15 @@ impl GrammarRule {
 
     fn len(&self) -> usize {
         match &self {
-            GrammarRule::AggregateOperator { name: _, children } => children.len(),
-            GrammarRule::NumberOperator { name: _, number: _ } => 1,
-            GrammarRule::VoidOperator {
+            GrammarRule::Aggregate { name: _, children } => children.len(),
+            GrammarRule::Number { name: _, number: _ } => 1,
+            GrammarRule::Void {
                 name: _,
                 size,
                 exec: _,
                 to_string: _,
             } => *size,
-            GrammarRule::UnaryNumberOperator {
-                name: _,
-                operation: _,
-                size,
-                child: _,
-                exec: _,
-                to_string: _,
-            } => *size,
-            GrammarRule::UnaryArrayOperator {
+            GrammarRule::UnaryNumber {
                 name: _,
                 operation: _,
                 size,
@@ -545,7 +548,15 @@ impl GrammarRule {
                 exec: _,
                 to_string: _,
             } => *size,
-            GrammarRule::BinaryOperator {
+            GrammarRule::UnaryArray {
+                name: _,
+                operation: _,
+                size,
+                child: _,
+                exec: _,
+                to_string: _,
+            } => *size,
+            GrammarRule::Binary {
                 name: _,
                 operation: _,
                 size,
@@ -557,47 +568,47 @@ impl GrammarRule {
         }
     }
 
-    fn dfs<'a, 'b>(self, callstack: &'b mut Vec<StackFn>) -> usize {
+    fn dfs(self, callstack: &mut Vec<StackFn>) -> usize {
         let f: StackFn = match self {
-            GrammarRule::AggregateOperator { name, children } => {
+            GrammarRule::Aggregate { name, children } => {
                 let indices: Vec<usize> = children
                     .into_iter()
                     .map(|child| child.dfs(callstack))
                     .collect();
                 StackFn {
-                    name: name.into(),
+                    name,
                     operation: "Aggregate".into(),
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, _, _| {
                         Ok(ExecOutput::Array(
                             indices
                                 .iter()
-                                .map(|i| stack.get(*i).unwrap().into_value())
+                                .map(|i| stack.get(*i).unwrap().as_value())
                                 .collect(),
                         )
                         .with_line_detail(name, None))
                     }),
                 }
             }
-            GrammarRule::NumberOperator { name, number } => StackFn {
-                name: name.into(),
+            GrammarRule::Number { name, number } => StackFn {
+                name,
                 operation: format!("{}", number),
                 exec: Rc::new(move |_: &Vec<ExecOutput>, _, _| {
                     Ok(ExecOutput::Value(number).with_line_detail(name, None))
                 }),
             },
-            GrammarRule::VoidOperator {
+            GrammarRule::Void {
                 name,
                 size: _,
                 exec,
                 to_string,
             } => StackFn {
-                name: name.into(),
+                name,
                 operation: (to_string)(),
                 exec: Rc::new(move |_: &Vec<ExecOutput>, rng, options| {
-                    Ok(exec(rng)?.with_line_detail(name, options.is_debug.then(|| to_string())))
+                    Ok(exec(rng)?.with_line_detail(name, options.is_debug.then(&to_string)))
                 }),
             },
-            GrammarRule::UnaryNumberOperator {
+            GrammarRule::UnaryNumber {
                 name,
                 operation,
                 size: _,
@@ -607,16 +618,16 @@ impl GrammarRule {
             } => {
                 let index = child.dfs(callstack);
                 StackFn {
-                    name: name.into(),
+                    name,
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                        let rhs = stack.get(index).unwrap().into_value();
+                        let rhs = stack.get(index).unwrap().as_value();
                         Ok(exec(rhs, rng)?
                             .with_line_detail(name, options.is_debug.then(|| to_string(rhs))))
                     }),
                 }
             }
-            GrammarRule::UnaryArrayOperator {
+            GrammarRule::UnaryArray {
                 name,
                 operation,
                 size: _,
@@ -626,16 +637,16 @@ impl GrammarRule {
             } => {
                 let index = child.dfs(callstack);
                 StackFn {
-                    name: name.into(),
+                    name,
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                        let v = &stack.get(index).unwrap().into_array()?;
+                        let v = &stack.get(index).unwrap().as_array()?;
                         Ok(exec(v, rng)?
                             .with_line_detail(name, options.is_debug.then(|| to_string(v))))
                     }),
                 }
             }
-            GrammarRule::BinaryOperator {
+            GrammarRule::Binary {
                 name,
                 operation,
                 size: _,
@@ -647,11 +658,11 @@ impl GrammarRule {
                 let lhs_index = lhs.dfs(callstack);
                 let rhs_index = rhs.dfs(callstack);
                 StackFn {
-                    name: name.into(),
+                    name,
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                        let lhs = stack.get(lhs_index).unwrap().into_value();
-                        let rhs = stack.get(rhs_index).unwrap().into_value();
+                        let lhs = stack.get(lhs_index).unwrap().as_value();
+                        let rhs = stack.get(rhs_index).unwrap().as_value();
                         Ok(exec(lhs, rhs, rng)?
                             .with_line_detail(name, options.is_debug.then(|| to_string(lhs, rhs))))
                     }),
@@ -760,16 +771,14 @@ impl GrammarError {
  */
 fn expression(tokenizer: &mut Tokenizer) -> Result<GrammarRule, GrammarError> {
     let left = term(tokenizer)?;
-    while let Some(Token::Plus | Token::Minus) = tokenizer.peek() {
-        if let Some(Token::Plus) = tokenizer.peek() {
-            tokenizer.next();
-            let right = expression(tokenizer)?;
-            return Ok(GrammarRule::sum(left, right));
-        } else {
-            tokenizer.next();
-            let right = expression(tokenizer)?;
-            return Ok(GrammarRule::sub(left, right));
-        }
+    if let Some(Token::Plus) = tokenizer.peek() {
+        tokenizer.next();
+        let right = expression(tokenizer)?;
+        return Ok(GrammarRule::sum(left, right));
+    } else if let Some(Token::Minus) = tokenizer.peek() {
+        tokenizer.next();
+        let right = expression(tokenizer)?;
+        return Ok(GrammarRule::sub(left, right));
     }
     Ok(left)
 }
@@ -1059,7 +1068,7 @@ impl Grammar {
             // const HORIZONTAL_BAR_SECTIONS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
             let stack_fn_start = Instant::now();
             let interval = if n < 100 { 1 } else { n / 100 };
-            for i in 0..n {
+            for (i, stack) in stacks.iter_mut().enumerate() {
                 if i % interval == 0 {
                     if let Some(message) = &debug_message {
                         let percent = (i / interval) + 1;
@@ -1070,8 +1079,8 @@ impl Grammar {
                         std::io::stdout().flush().map_err(|e| format!("{e}"))?;
                     }
                 }
-                let (output, _) = (stack_fn.exec)(&stacks[i], rng, &exec_options)?;
-                stacks[i].push(output);
+                let (output, _) = (stack_fn.exec)(stack, rng, &exec_options)?;
+                stack.push(output);
             }
             if let Some(message) = &debug_message {
                 println!(
@@ -1095,7 +1104,7 @@ impl Grammar {
         Ok(TestDetails {
             output: stacks
                 .into_iter()
-                .map(|s| s[s.len() - 1].into_value())
+                .map(|s| s[s.len() - 1].as_value())
                 .collect(),
             time_taken: start_time.elapsed(),
             details,

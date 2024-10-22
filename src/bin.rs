@@ -97,9 +97,8 @@ pub fn main() {
                             dice.bright_magenta()
                         );
                         println!(
-                            "{:>start_width$} {} {}",
+                            "{:>start_width$} with {}",
                             "Rolling".bold().bright_cyan(),
-                            "with",
                             "Std RNG".bold().bright_cyan()
                         );
                     }
@@ -109,7 +108,7 @@ pub fn main() {
                             if is_debug {
                                 println!("{:start_width$}", result);
                             }
-                            println!("{}", result.into_value())
+                            println!("{}", result.as_value())
                         }
                         Err(err) => println!("{:>start_width$} {}", "Error".red().bold(), err),
                     }
@@ -273,7 +272,7 @@ impl fmt::Display for SimpleLogo {
 }
 
 const VERTICAL_BAR_SECTIONS: &[char] = &['┄', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-const HORIZONTAL_BAR_SECTIONS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+// const HORIZONTAL_BAR_SECTIONS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 
 struct Buckets {
     buckets: Vec<usize>,
@@ -422,11 +421,12 @@ impl fmt::Display for XAxis<'_> {
         let bar_width = self.bar_width;
         if self.buckets.bucket_size == 1 && bar_width > printed_width(self.buckets.max_value) {
             for i in 0..self.buckets.buckets.len() {
-                if i % 1 == 0 {
-                    write!(f, "{:^bar_width$}", self.buckets.buckets_start + i as i64)?;
-                } else {
-                    write!(f, "{:^bar_width$}", "")?;
-                }
+                // if i % 1 == 0 {
+                //     write!(f, "{:^bar_width$}", self.buckets.buckets_start + i as i64)?;
+                // } else {
+                //     write!(f, "{:^bar_width$}", "")?;
+                // }
+                write!(f, "{:^bar_width$}", self.buckets.buckets_start + i as i64)?;
             }
             return write!(f, "");
         }
@@ -578,7 +578,7 @@ impl Buckets {
 
     fn print_graph(&self, front_padding: usize, graph_height: usize, reference: Option<i64>) {
         let bar_width = get_max_width(self.buckets.len());
-        let reference_index = reference.map(|i| self.which(i)).flatten();
+        let reference_index = reference.and_then(|i| self.which(i));
         let interval_count = graph_height.clamp(1, 200);
         let graph_min = 0;
         let graph_max = {
@@ -727,7 +727,7 @@ enum PercentileCompare {
 
 impl Percentiles {
     fn from_data(mut data: Vec<i64>) -> Option<Self> {
-        if data.len() == 0 {
+        if data.is_empty() {
             return None;
         }
 
@@ -738,7 +738,7 @@ impl Percentiles {
             *data.get(data.len() / 2).unwrap() as f64
         };
 
-        let mean = data.iter().fold(0, |a, b| a + b) as f64 / data.len() as f64;
+        let mean = data.iter().sum::<i64>() as f64 / data.len() as f64;
 
         let data_size = data.len();
 
@@ -907,7 +907,7 @@ impl Percentiles {
             fn precision(&self) -> usize {
                 match self {
                     PercentileLabel::Percent(_, precision) => *precision,
-                    PercentileLabel::Text(s) => 0,
+                    PercentileLabel::Text(_) => 0,
                 }
             }
         }
@@ -927,7 +927,7 @@ impl Percentiles {
         let reference_title = "Ref";
         let reference_percentile = reference.map(|v| self.get_percentile_by_value(v));
 
-        let percentiles = (|| {
+        let percentiles = {
             let mut percentiles: Vec<(PercentileLabel, &Percentile)> = vec![];
             let mut value_column_width = 1;
             for i in 0..=3 {
@@ -954,7 +954,7 @@ impl Percentiles {
             if let Some(p) = &reference_percentile {
                 let idx = percentiles
                     .binary_search_by(|(_, element)| {
-                        match element.inverse_count(cmp).cmp(&&p.inverse_count(cmp)) {
+                        match element.inverse_count(cmp).cmp(&p.inverse_count(cmp)) {
                             Ordering::Equal => match element.value.cmp(&p.value) {
                                 Ordering::Equal => Ordering::Less,
                                 ord => ord,
@@ -967,7 +967,7 @@ impl Percentiles {
             }
 
             percentiles
-        })();
+        };
 
         let percentage_header = "%";
         let range_header = "Range";
@@ -982,20 +982,20 @@ impl Percentiles {
             "<%"
         };
 
-        let max_precision = (|| {
+        let max_precision = {
             let mut max_precision = 0;
             for (label, _) in percentiles.iter() {
                 max_precision = max_precision.max(label.precision());
             }
             max_precision + 1
-        })();
+        };
 
         let (
             percentage_column_width,
             range_column_width,
             inverse_column_width,
             inverse_percentage_column_width,
-        ) = (|| {
+        ) = {
             let mut percentage_column_width = percentage_header.len();
             let mut range_column_width = range_header.len();
             let mut inverse_column_width = inverse_header.len();
@@ -1011,7 +1011,7 @@ impl Percentiles {
                 inverse_column_width,
                 4 + max_precision,
             )
-        })();
+        };
 
         println!(
             "{:>front_padding$}─{:─<percentage_column_width$}─┬─{:─<range_column_width$}─┬─{:─<inverse_column_width$}─┬─{:─<inverse_percentage_column_width$}─┬",
@@ -1156,8 +1156,6 @@ impl Percentiles {
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
-
-    use rand::thread_rng;
 
     use super::*;
 

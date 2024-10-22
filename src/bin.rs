@@ -674,6 +674,10 @@ impl Percentile {
         self.size
     }
 
+    fn percentage(&self) -> f64 {
+        self.size() as f64 / self.data_size as f64 * 100f64
+    }
+
     fn greater_than_count(&self) -> usize {
         self.greater_than_count
     }
@@ -711,6 +715,8 @@ struct Percentiles {
     data_size: usize,
     first: i64,
     last: i64,
+    mean: f64,
+    median: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -726,6 +732,14 @@ impl Percentiles {
         }
 
         data.sort();
+        let median = if data.len() % 2 == 0 {
+            (data.get(data.len() / 2).unwrap() + data.get(data.len() / 2 - 1).unwrap()) as f64 / 2.0
+        } else {
+            *data.get(data.len() / 2).unwrap() as f64
+        };
+
+        let mean = data.iter().fold(0, |a, b| a + b) as f64 / data.len() as f64;
+
         let data_size = data.len();
 
         let mut percentiles: Vec<(i64, usize, usize)> = vec![];
@@ -751,7 +765,17 @@ impl Percentiles {
             data_size,
             first: *data.first().unwrap_or(&0),
             last: *data.last().unwrap_or(&0),
+            mean,
+            median,
         })
+    }
+
+    fn mode(&self) -> i64 {
+        self.percentiles
+            .iter()
+            .max_by(|a, b| a.size.cmp(&b.size))
+            .unwrap()
+            .value
     }
 
     fn get_percentile_by_value(&self, value: i64) -> Percentile {
@@ -793,17 +817,74 @@ impl Percentiles {
             .unwrap_err()
     }
 
+    fn get_percentile_by_percentage(
+        &self,
+        percentage: impl Into<f64>,
+        cmp: PercentileCompare,
+    ) -> Option<&Percentile> {
+        let percentage = percentage.into();
+        if percentage >= 100f64 {
+            return None;
+        }
+
+        let value = (percentage / 100f64 * self.data_size as f64).round() as usize;
+
+        let idx = self
+            .percentiles
+            .binary_search_by(|element| match cmp {
+                PercentileCompare::Greater => match element.greater_than_count().cmp(&value) {
+                    Ordering::Equal => Ordering::Greater,
+                    ord => ord,
+                },
+                PercentileCompare::Less => match value.cmp(&element.less_than_count()) {
+                    Ordering::Equal => Ordering::Greater,
+                    ord => ord,
+                },
+            })
+            .unwrap_err();
+
+        match cmp {
+            PercentileCompare::Greater => {
+                if idx >= self.percentiles.len() {
+                    return None;
+                }
+                self.percentiles.get(idx)
+            }
+            PercentileCompare::Less => {
+                if idx == 0 {
+                    return None;
+                }
+                self.percentiles.get(idx)
+            }
+        }
+    }
+
+    fn last(&self, cmp: PercentileCompare) -> &Percentile {
+        match cmp {
+            PercentileCompare::Greater => self.percentiles.last().unwrap(),
+            PercentileCompare::Less => self.percentiles.first().unwrap(),
+        }
+    }
     fn print(&self, front_padding: usize, reference: Option<i64>) {
         eprintln!(
-            "{:>front_padding$} percentile table; data contains {} unique values; ",
+            "{:>front_padding$} percentile tables; data contains {} unique values",
             "Drawing".bright_cyan().bold(),
             self.percentiles.len().bright_yellow().bold(),
         );
-        self.print_cmp(front_padding, PercentileCompare::Greater, reference);
-        self.print_cmp(front_padding, PercentileCompare::Less, reference);
+        self.print_percentile_table(front_padding, PercentileCompare::Greater, reference);
+        self.print_percentile_table(front_padding, PercentileCompare::Less, reference);
+        if let Some(reference_value) = reference {
+            self.print_reference_stat_table(front_padding, reference_value);
+        }
+        self.print_stat_table(front_padding);
     }
 
-    fn print_cmp(&self, front_padding: usize, cmp: PercentileCompare, reference: Option<i64>) {
+    fn print_percentile_table(
+        &self,
+        front_padding: usize,
+        cmp: PercentileCompare,
+        reference: Option<i64>,
+    ) {
         enum PercentileLabel {
             Percent(f64, usize),
             Text(&'static str),
@@ -978,76 +1059,97 @@ impl Percentiles {
         );
     }
 
-    fn get_percentile_by_percentage(
-        &self,
-        percentage: impl Into<f64>,
-        cmp: PercentileCompare,
-    ) -> Option<&Percentile> {
-        let percentage = percentage.into();
-        if percentage >= 100f64 {
-            return None;
-        }
+    fn print_reference_stat_table(&self, front_padding: usize, reference_value: i64) {
+        let row_header_column_width = 10;
+        let less_than_column_width = 11;
+        let reference_column_width = 11;
+        let greater_than_column_width = 11;
 
-        let value = (percentage / 100f64 * self.data_size as f64).round() as usize;
+        let percentile = self.get_percentile_by_value(reference_value);
 
-        let idx = self
-            .percentiles
-            .binary_search_by(|element| match cmp {
-                PercentileCompare::Greater => match element.greater_than_count().cmp(&value) {
-                    Ordering::Equal => Ordering::Greater,
-                    ord => ord,
-                },
-                PercentileCompare::Less => match value.cmp(&element.less_than_count()) {
-                    Ordering::Equal => Ordering::Greater,
-                    ord => ord,
-                },
-            })
-            .unwrap_err();
-
-        match cmp {
-            PercentileCompare::Greater => {
-                if idx >= self.percentiles.len() {
-                    return None;
-                }
-                self.percentiles.get(idx)
-            }
-            PercentileCompare::Less => {
-                if idx == 0 {
-                    return None;
-                }
-                self.percentiles.get(idx)
-            }
-        }
+        println!(
+            "{:>front_padding$}─{:─<row_header_column_width$}─┬─{:─<less_than_column_width$}─┬─{:─<reference_column_width$}─┬─{:─<greater_than_column_width$}─┬",
+            "┎".bright_yellow(),
+            "", "", "", "",
+        );
+        println!(
+            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
+            "┃".bright_yellow(),
+            "",
+            "<",
+            "Ref".bold().magenta(),
+            "<",
+        );
+        println!(
+            "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
+            "┠".bright_yellow(),
+            "", "", "", "",
+        );
+        println!(
+            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$.2} │ {:^reference_column_width$.2} │ {:^greater_than_column_width$.2} │",
+            "┃".bright_yellow(),
+            "P%",
+            percentile.less_than_percentage(),
+            percentile.percentage(),
+            percentile.greater_than_percentage(),
+        );
+        println!(
+            "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
+            "┠".bright_yellow(),
+            "", "", "", "",
+        );
+        println!(
+            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
+            "┃".bright_yellow(),
+            "size",
+            percentile.less_than_count(),
+            percentile.size(),
+            percentile.greater_than_count(),
+        );
+        println!(
+            "{:>front_padding$}─{:─<row_header_column_width$}─┴─{:─<less_than_column_width$}─┴─{:─<reference_column_width$}─┴─{:─<greater_than_column_width$}─┴",
+            "┖".bright_yellow(),
+            "", "", "", "",
+        );
     }
 
-    fn first(&self, cmp: PercentileCompare) -> &Percentile {
-        match cmp {
-            PercentileCompare::Greater => self.percentiles.first().unwrap(),
-            PercentileCompare::Less => self.percentiles.last().unwrap(),
-        }
-    }
+    fn print_stat_table(&self, front_padding: usize) {
+        let row_header_column_width = 10;
+        let less_than_column_width = 11;
+        let reference_column_width = 11;
+        let greater_than_column_width = 11;
 
-    fn last(&self, cmp: PercentileCompare) -> &Percentile {
-        match cmp {
-            PercentileCompare::Greater => self.percentiles.last().unwrap(),
-            PercentileCompare::Less => self.percentiles.first().unwrap(),
-        }
-    }
-}
-
-struct Statistics {
-    buckets: Buckets,
-    percentiles: Percentiles,
-    reference: Option<i64>,
-}
-
-impl Statistics {
-    fn from_data(mut data: Vec<i64>) -> Self {
-        Self {
-            buckets: Buckets::from_data(&data),
-            percentiles: Percentiles::from_data(data).unwrap(),
-            reference: None,
-        }
+        println!(
+            "{:>front_padding$}─{:─<row_header_column_width$}─┬─{:─<less_than_column_width$}─┬─{:─<reference_column_width$}─┬─{:─<greater_than_column_width$}─┬",
+            "┎".bright_yellow(),
+            "", "", "", "",
+        );
+        println!(
+            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
+            "┃".bright_yellow(),
+            "",
+            "Mean",
+            "Median",
+            "Mode",
+        );
+        println!(
+            "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
+            "┠".bright_yellow(),
+            "", "", "", "",
+        );
+        println!(
+            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$.2} │ {:^reference_column_width$.2} │ {:^greater_than_column_width$.2} │",
+            "┃".bright_yellow(),
+            "P%",
+            self.mean,
+            self.median,
+            self.mode(),
+        );
+        println!(
+            "{:>front_padding$}─{:─<row_header_column_width$}─┴─{:─<less_than_column_width$}─┴─{:─<reference_column_width$}─┴─{:─<greater_than_column_width$}─┴",
+            "┖".bright_yellow(),
+            "", "", "", "",
+        );
     }
 }
 

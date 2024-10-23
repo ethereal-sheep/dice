@@ -100,13 +100,30 @@ pub fn main() {
                             "Compiled".bold().yellow(),
                             dice.bright_magenta()
                         );
-                        println!(
-                            "{:>start_width$} with {}",
-                            "Rolling".bold().bright_cyan(),
-                            "Std RNG".bold().bright_cyan()
-                        );
                     }
-                    let result = dice.roll(&mut StdRng::from_entropy(), RollOptions { is_debug });
+                    let seed = matches.get_one::<u64>("seed");
+                    let mut rng: StdRng = if let Some(seed) = seed {
+                        StdRng::seed_from_u64(*seed)
+                    } else {
+                        StdRng::from_entropy()
+                    };
+                    if is_debug {
+                        if let Some(seed) = seed {
+                            println!(
+                                "{:>start_width$} with seeded {}; Seed {}",
+                                "Rolling".bold().bright_cyan(),
+                                "Std RNG".bold().bright_cyan(),
+                                seed.bold().bright_yellow(),
+                            );
+                        } else {
+                            println!(
+                                "{:>start_width$} with {}",
+                                "Rolling".bold().bright_cyan(),
+                                "Std RNG".bold().bright_cyan()
+                            );
+                        }
+                    }
+                    let result = dice.roll(&mut rng, RollOptions { is_debug });
                     match result {
                         Ok(result) => {
                             if is_debug {
@@ -174,13 +191,30 @@ pub fn main() {
                             "Compiled".bold().yellow(),
                             dice.bright_magenta()
                         );
-                        println!(
-                            "{:>start_width$} with {}",
-                            "Testing".bold().bright_cyan(),
-                            "Std RNG".bold().bright_yellow()
-                        );
                     }
-                    let result = dice.test(&mut StdRng::from_entropy(), options);
+                    let seed = matches.get_one::<u64>("seed");
+                    let mut rng: StdRng = if let Some(seed) = seed {
+                        StdRng::seed_from_u64(*seed)
+                    } else {
+                        StdRng::from_entropy()
+                    };
+                    if is_debug {
+                        if let Some(seed) = seed {
+                            println!(
+                                "{:>start_width$} with seeded {}; Seed {}",
+                                "Testing".bold().bright_cyan(),
+                                "Std RNG".bold().bright_cyan(),
+                                seed.bold().bright_yellow(),
+                            );
+                        } else {
+                            println!(
+                                "{:>start_width$} with {}",
+                                "Testing".bold().bright_cyan(),
+                                "Std RNG".bold().bright_cyan()
+                            );
+                        }
+                    }
+                    let result = dice.test(&mut rng, options);
                     match result {
                         Ok(result) => {
                             if is_debug {

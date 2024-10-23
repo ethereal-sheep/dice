@@ -1165,8 +1165,8 @@ mod tests {
             result,
             Err(GrammarError {
                 error_type: GrammarErrorType::UnknownToken(_),
-                error_index: 0,
-                error_length: 2,
+                error_index: 1,
+                error_length: 1,
                 input_string: _,
             })
         );
@@ -1177,7 +1177,7 @@ mod tests {
             input_string: _,
         }) = result
         {
-            assert_eq!(s.as_str(), "ab");
+            assert_eq!(s.as_str(), "b");
         }
     }
 

@@ -841,7 +841,7 @@ impl Percentiles {
                     ord => ord,
                 },
                 PercentileCompare::Less => match value.cmp(&element.less_than_count()) {
-                    Ordering::Equal => Ordering::Greater,
+                    Ordering::Equal => Ordering::Less,
                     ord => ord,
                 },
             })
@@ -856,9 +856,15 @@ impl Percentiles {
             }
             PercentileCompare::Less => {
                 if idx == 0 {
-                    return None;
+                    return self.percentiles.get(idx).and_then(|p| {
+                        if p.less_than_percentage() >= percentage {
+                            Some(p)
+                        } else {
+                            None
+                        }
+                    });
                 }
-                self.percentiles.get(idx)
+                self.percentiles.get(idx - 1)
             }
         }
     }
@@ -1080,9 +1086,9 @@ impl Percentiles {
             "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
             "┃".bright_yellow(),
             "",
-            "<",
+            "x<",
             "Ref".bold().magenta(),
-            "<",
+            "<x",
         );
         println!(
             "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
@@ -1093,9 +1099,9 @@ impl Percentiles {
             "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$.2} │ {:^reference_column_width$.2} │ {:^greater_than_column_width$.2} │",
             "┃".bright_yellow(),
             "P%",
-            percentile.less_than_percentage(),
-            percentile.percentage(),
             percentile.greater_than_percentage(),
+            percentile.percentage(),
+            percentile.less_than_percentage(),
         );
         println!(
             "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
@@ -1106,9 +1112,9 @@ impl Percentiles {
             "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
             "┃".bright_yellow(),
             "size",
-            percentile.less_than_count(),
-            percentile.size(),
             percentile.greater_than_count(),
+            percentile.size(),
+            percentile.less_than_count(),
         );
         println!(
             "{:>front_padding$}─{:─<row_header_column_width$}─┴─{:─<less_than_column_width$}─┴─{:─<reference_column_width$}─┴─{:─<greater_than_column_width$}─┴",

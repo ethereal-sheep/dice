@@ -19,6 +19,12 @@ pub fn main() {
                 .arg(arg!(
                     --nologo "Suppresses logo in debug mode"
                 ))
+                .arg(
+                    arg!(
+                        --seed <SEED> "Seeds the PRNG with SEED"
+                    )
+                    .value_parser(value_parser!(u64)),
+                )
                 .arg(arg!(
                     --raw "Returns the raw value if available"
                 )),
@@ -53,18 +59,16 @@ pub fn main() {
                 )
                 .arg(
                     arg!(
+                        --seed <SEED> "Seeds the PRNG with SEED"
+                    )
+                    .value_parser(value_parser!(u64)),
+                )
+                .arg(
+                    arg!(
                         --reference <REF> "Outputs test data in reference to REF"
                     )
                     .value_parser(value_parser!(i64)).allow_hyphen_values(true).allow_negative_numbers(true),
                 ),
-        )
-        .subcommand(
-            Command::new("seed")
-                .about("Seeds the prevailing random state")
-                .arg(arg!(<SEED> "Dice script to parse and roll"))
-                .arg(arg!(
-                    -d --debug "Turn debugging information on"
-                )),
         )
         .get_matches();
 
@@ -314,7 +318,7 @@ fn choose_char_for_bucket_at_interval(
     bucket_value: f64,
 ) -> char {
     let normalized_position = ((bucket_value - interval_start) / interval_size).clamp(0.0, 1.0);
-    let index = (normalized_position * 8.0).floor() as usize;
+    let index = (normalized_position * 8.0).round() as usize;
     VERTICAL_BAR_SECTIONS[index]
 }
 
@@ -1003,7 +1007,7 @@ impl Percentiles {
                 percentage_column_width = percentage_column_width.max(label.len());
                 range_column_width = range_column_width.max(printed_width(percentile.value));
                 inverse_column_width =
-                    inverse_column_width.max(printed_width(percentile.greater_than_count() as u32));
+                    inverse_column_width.max(printed_width(percentile.inverse_count(cmp) as u32));
             }
             (
                 percentage_column_width,
@@ -1138,9 +1142,9 @@ impl Percentiles {
             "", "", "", "",
         );
         println!(
-            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$.2} │ {:^reference_column_width$.2} │ {:^greater_than_column_width$.2} │",
+            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$.2} │ {:^reference_column_width$.1} │ {:^greater_than_column_width$} │",
             "┃".bright_yellow(),
-            "P%",
+            "Value",
             self.mean,
             self.median,
             self.mode(),

@@ -3,7 +3,6 @@ use core::fmt;
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
 use std::{
-    io::Write,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -1043,7 +1042,7 @@ impl Grammar {
         let middle_width = 15;
 
         if options.is_debug {
-            println!(
+            eprintln!(
                 "{:>front_width$} {:<middle_width$} => {}",
                 "Running".bold().bright_cyan(),
                 "test of size",
@@ -1051,15 +1050,14 @@ impl Grammar {
             );
         }
 
-        for stack_fn in &self.callstack {
+        for (j, stack_fn) in self.callstack.iter().enumerate() {
             let debug_message = if is_debug {
                 let message = format!(
                     "{:>front_width$} {:<middle_width$} =>",
                     stack_fn.name.bright_yellow().bold(),
                     stack_fn.operation.bright_magenta()
                 );
-                print!("{message}");
-                std::io::stdout().flush().map_err(|e| format!("{e}"))?;
+                eprint!("{message}");
                 Some(message)
             } else {
                 None
@@ -1072,18 +1070,31 @@ impl Grammar {
                 if i % interval == 0 {
                     if let Some(message) = &debug_message {
                         let percent = (i / interval) + 1;
-                        print!(
+                        eprint!(
                             "\x1b[2K\r{message} {}▏{percent}%",
                             progress_string(n as f64, 20, i as f64),
                         );
-                        std::io::stdout().flush().map_err(|e| format!("{e}"))?;
+                    } else {
+                        let interval = if (self.callstack.len() * n) < 100 {
+                            1
+                        } else {
+                            (self.callstack.len() * n) / 100
+                        };
+                        let percent = ((j * n + i) / interval) + 1;
+                        eprint!(
+                            "\x1b[2K\r{:>front_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s",
+                            "Testing".bold().bright_cyan(),
+                            stack_fn.operation.bright_magenta(),
+                            progress_string((self.callstack.len() * n) as f64, 20, (j * n + i) as f64),
+                            start_time.elapsed().as_secs_f32().bold()
+                        );
                     }
                 }
                 let (output, _) = (stack_fn.exec)(stack, rng, &exec_options)?;
                 stack.push(output);
             }
             if let Some(message) = &debug_message {
-                println!(
+                eprintln!(
                     "\x1b[2K\r{message} {:<5}ms",
                     stack_fn_start.elapsed().as_millis()
                 );
@@ -1095,7 +1106,11 @@ impl Grammar {
             }
         }
 
-        println!(
+        if !is_debug {
+            eprint!("\x1b[2K\r");
+        }
+
+        eprintln!(
             "{:>front_width$} {:.<middle_width$} => {:<6.2}s",
             "Finished".bold().bright_green(),
             "",

@@ -17,7 +17,7 @@ name = "dice"
 path = "src/bin.rs"
 
 [dependencies]
-clap = { version = "4.5.20", features = ["cargo"] }
+clap = { version = "4.5.21", features = ["cargo"] }
 owo-colors = "4.1.0"
 rand = "0.8.5"
 termsize = "0.1.9"

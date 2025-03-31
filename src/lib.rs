@@ -73,6 +73,14 @@ impl Dice {
         })
     }
 
+    pub fn min(&self) -> i64 {
+        self.grammar.min()
+    }
+
+    pub fn max(&self) -> i64 {
+        self.grammar.max()
+    }
+
     pub fn roll(
         &self,
         rng: &mut impl rand::Rng,

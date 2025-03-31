@@ -100,6 +100,11 @@ pub fn main() {
                             "Compiled".bold().yellow(),
                             dice.bright_magenta()
                         );
+                        println!(
+                            "{:>start_width$} with {}",
+                            "Rolling".bold().bright_cyan(),
+                            "Std RNG".bold().bright_cyan()
+                        );
                     }
                     let seed = matches.get_one::<u64>("seed");
                     let mut rng: StdRng = if let Some(seed) = seed {
@@ -129,7 +134,7 @@ pub fn main() {
                             if is_debug {
                                 println!("{:start_width$}", result);
                             }
-                            println!("{}", result.as_value())
+                            println!("{}", result.value())
                         }
                         Err(err) => println!("{:>start_width$} {}", "Error".red().bold(), err),
                     }
@@ -224,15 +229,20 @@ pub fn main() {
                                     result.output.len().bright_yellow().bold()
                                 );
                             }
-                            let buckets = Buckets::from_data(&result.output);
-                            buckets.print_graph(
+                            let reference = matches.get_one("reference").copied();
+                            let mut buckets = Buckets::from_range(dice.min(), dice.max());
+                            buckets.fill(&result.output);
+                            buckets.print_histogram(
                                 start_width,
                                 *matches.get_one::<u64>("height").unwrap_or(&10) as usize,
-                                matches.get_one("reference").copied(),
+                                reference,
+                                is_debug,
                             );
 
                             let percentiles = Percentiles::from_data(result.output).unwrap();
                             percentiles.print(start_width, matches.get_one("reference").copied());
+                            // let percentiles = Percentiles::from_data(result.output);
+                            percentiles.print_table(start_width, reference, is_debug);
                         }
                         Err(err) => println!("{:>start_width$} {}", "Error".red().bold(), err),
                     }
@@ -310,14 +320,13 @@ impl fmt::Display for SimpleLogo {
 }
 
 const VERTICAL_BAR_SECTIONS: &[char] = &['┄', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-// const HORIZONTAL_BAR_SECTIONS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 
 struct Buckets {
     buckets: Vec<usize>,
-    buckets_start: i64,
     bucket_size: usize,
-    min_value: i64,
-    max_value: i64,
+    min: i64,
+    max: i64,
+    size: usize,
 }
 
 fn get_max_bucket_count() -> usize {
@@ -356,10 +365,10 @@ fn choose_char_for_bucket_at_interval(
     VERTICAL_BAR_SECTIONS[index]
 }
 
-fn printed_width(n: impl Into<i64>) -> usize {
+fn printed_width_i64(n: impl Into<i64>) -> usize {
     let number = n.into();
     if number < 0 {
-        return printed_width(number.abs()) + 1;
+        return printed_width_i64(number.abs()) + 1;
     }
     if number == 0 {
         return 1;
@@ -371,6 +380,21 @@ fn printed_width(n: impl Into<i64>) -> usize {
         current /= 10;
     }
     count
+}
+
+fn printed_width_f64(n: f64) -> usize {
+    format!("{}", n).len()
+}
+
+fn precision(x: f64, digits: u32) -> f64 {
+    if x == 0. || digits == 0 {
+        0.
+    } else {
+        let shift = digits as i32 - x.abs().log10().ceil() as i32;
+        let shift_factor = 10_f64.powi(shift);
+
+        (x * shift_factor).round() / shift_factor
+    }
 }
 
 struct BucketLine {
@@ -385,12 +409,12 @@ impl BucketLine {
         interval_start: f64,
         interval_size: f64,
         reference_index: Option<usize>,
-        it: impl Iterator<Item = usize>,
+        it: impl Iterator<Item = f64>,
     ) -> Self {
         Self {
             chars: it
                 .map(|value| {
-                    choose_char_for_bucket_at_interval(interval_start, interval_size, value as f64)
+                    choose_char_for_bucket_at_interval(interval_start, interval_size, value)
                 })
                 .collect(),
             bar_width,
@@ -457,31 +481,24 @@ struct XAxis<'a> {
 impl fmt::Display for XAxis<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let bar_width = self.bar_width;
-        if self.buckets.bucket_size == 1 && bar_width > printed_width(self.buckets.max_value) {
+        if self.buckets.bucket_size == 1 && bar_width > printed_width_i64(self.buckets.max) {
             for i in 0..self.buckets.buckets.len() {
-                // if i % 1 == 0 {
-                //     write!(f, "{:^bar_width$}", self.buckets.buckets_start + i as i64)?;
-                // } else {
-                //     write!(f, "{:^bar_width$}", "")?;
-                // }
-                write!(f, "{:^bar_width$}", self.buckets.buckets_start + i as i64)?;
+                write!(f, "{:^bar_width$}", self.buckets.min + i as i64)?;
             }
             return write!(f, "");
         }
 
         let graph_width = self.buckets.get_graph_width(bar_width);
 
-        let front_length = printed_width(self.buckets.min_value);
-        let back_length = printed_width(self.buckets.max_value);
+        let front_length = printed_width_i64(self.buckets.min);
+        let back_length = printed_width_i64(self.buckets.max);
 
-        let mid_value =
-            self.buckets.min_value + (self.buckets.max_value - self.buckets.min_value) / 2;
-        let mid_length = printed_width(mid_value);
-        let quartile_value =
-            self.buckets.min_value + (self.buckets.max_value - self.buckets.min_value) / 4;
-        let quartile_length = printed_width(quartile_value);
+        let mid_value = self.buckets.min + (self.buckets.max - self.buckets.min) / 2;
+        let mid_length = printed_width_i64(mid_value);
+        let quartile_value = self.buckets.min + (self.buckets.max - self.buckets.min) / 4;
+        let quartile_length = printed_width_i64(quartile_value);
         let triquartile_value = mid_value + (mid_value - quartile_value);
-        let triquartile_length = printed_width(triquartile_value);
+        let triquartile_length = printed_width_i64(triquartile_value);
 
         let mid_index = self.buckets.which(mid_value).unwrap() * bar_width + (bar_width - 1) / 2;
         let quartile_index =
@@ -509,7 +526,7 @@ impl fmt::Display for XAxis<'_> {
             return write!(
                 f,
                 "{}{:first_padding$}{}{:second_padding$}{}{:third_padding$}{}{:fourth_padding$}{}",
-                self.buckets.min_value,
+                self.buckets.min,
                 "",
                 quartile_value,
                 "",
@@ -517,7 +534,7 @@ impl fmt::Display for XAxis<'_> {
                 "",
                 triquartile_value,
                 "",
-                self.buckets.max_value
+                self.buckets.max
             );
         }
 
@@ -531,7 +548,7 @@ impl fmt::Display for XAxis<'_> {
             return write!(
                 f,
                 "{}{:first_padding$}{}{:second_padding$}{}",
-                self.buckets.min_value, "", mid_value, "", self.buckets.max_value
+                self.buckets.min, "", mid_value, "", self.buckets.max
             );
         }
 
@@ -539,11 +556,7 @@ impl fmt::Display for XAxis<'_> {
         if graph_width > back_length + front_length {
             let padding = graph_width - back_length;
 
-            return write!(
-                f,
-                "{}{:padding$}{}",
-                self.buckets.min_value, "", self.buckets.max_value
-            );
+            return write!(f, "{}{:padding$}{}", self.buckets.min, "", self.buckets.max);
         }
 
         write!(f, "")
@@ -551,30 +564,29 @@ impl fmt::Display for XAxis<'_> {
 }
 
 impl Buckets {
-    fn from_data(data: &Vec<i64>) -> Self {
-        let min_value = *data.iter().min().unwrap_or(&0);
-        let max_value = *data.iter().max().unwrap_or(&100);
-        let value_range = (max_value - min_value + 1) as usize;
+    fn from_range(min: i64, max: i64) -> Self {
+        let value_range = (max - min + 1) as usize;
         let (bucket_count, bucket_size, _extra_range) =
             choose_bucket_count_size_and_extra_range(value_range);
-        let bucket_min = min_value;
-
-        let mut buckets: Vec<usize> = vec![0; bucket_count];
-        let mut mode_index = 0;
-        for num in data {
-            let index = (*num - bucket_min) as usize / bucket_size;
-            buckets[index] += 1;
-            if buckets[index] > buckets[mode_index] {
-                mode_index = index;
-            }
-        }
+        let buckets: Vec<usize> = vec![0; bucket_count];
 
         Self {
             buckets,
-            buckets_start: bucket_min,
             bucket_size,
-            min_value,
-            max_value,
+            min,
+            max,
+            size: 0,
+        }
+    }
+
+    fn fill(&mut self, data: &Vec<i64>) {
+        for num in data {
+            if *num < self.min || *num > self.max {
+                continue;
+            }
+            let index = (*num - self.min) as usize / self.bucket_size;
+            self.buckets[index] += 1;
+            self.size += 1;
         }
     }
 
@@ -583,24 +595,42 @@ impl Buckets {
     }
 
     fn which(&self, value: i64) -> Option<usize> {
-        if value < self.min_value || value > self.max_value {
+        if value < self.min || value > self.max {
             return None;
         }
-        let normalized_value = value - self.buckets_start;
+        let normalized_value = value - self.min;
         if normalized_value < 0 || normalized_value as usize >= self.range() {
             return None;
         }
         Some(normalized_value as usize / self.bucket_size)
     }
 
+    fn get_modal_bucket_index(&self) -> Option<usize> {
+        self.buckets
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, &val)| val)
+            .map(|(i, _)| i)
+    }
+
     fn get_bucket(&self, index: usize) -> Option<Bucket> {
         if index >= self.buckets.len() {
             return None;
         }
-        Some(Bucket {
-            start: self.buckets_start + (index * self.bucket_size) as i64,
-            size: self.bucket_size,
-        })
+        let start = self.min + (index * self.bucket_size) as i64;
+        let size = if start + self.bucket_size as i64 > self.max {
+            (self.max - start + 1) as usize
+        } else {
+            self.bucket_size
+        };
+        Some(Bucket { start, size })
+    }
+
+    fn get_normalized_bucket_value(&self, index: usize) -> Option<f64> {
+        if let Some(bucket) = self.get_bucket(index) {
+            return Some(self.buckets[index] as f64 / bucket.size as f64);
+        }
+        None
     }
 
     fn get_graph_width(&self, bar_width: usize) -> usize {
@@ -614,59 +644,92 @@ impl Buckets {
         }
     }
 
-    fn print_graph(&self, front_padding: usize, graph_height: usize, reference: Option<i64>) {
+    fn print_histogram(
+        &self,
+        front_padding: usize,
+        graph_height: usize,
+        reference: Option<i64>,
+        is_debug: bool,
+    ) {
         let bar_width = get_max_width(self.buckets.len());
         let reference_index = reference.and_then(|i| self.which(i));
         let interval_count = graph_height.clamp(1, 200);
-        let graph_min = 0;
-        let graph_max = {
-            let max_bucket = *self.buckets.iter().max().unwrap_or(&100);
-            max_bucket
-        };
-        let interval_size = (graph_max - graph_min) as f64 / interval_count as f64;
+        let graph_min = 0.0;
+        let modal_bucket_normalized_value = self
+            .get_modal_bucket_index()
+            .and_then(|i| self.get_normalized_bucket_value(i))
+            .map(|v| v / self.size as f64)
+            .unwrap();
+        let graph_max = precision(modal_bucket_normalized_value, 2) * self.size as f64;
+        let interval_size = (graph_max - graph_min) / interval_count as f64;
 
         let graph_width = self.get_graph_width(bar_width);
-        let top_line = (interval_count as f64 + 0.5) * interval_size;
-        eprintln!(
-            "{:>front_padding$} histogram of {} buckets of size {}; occupying {} ({} + 4) rows and {} columns (bar width {})",
-            "Drawing".bright_cyan().bold(),
-            self.buckets.len().bright_yellow().bold(),
-            self.bucket_size.bright_yellow().bold(),
-            (graph_height + 4).bright_yellow().bold(),
-            graph_height,
-            graph_width.bright_yellow().bold(),
-            bar_width.bright_yellow().bold(),
-        );
-        if let Some(reference_value) = reference {
-            if let Some(index) = reference_index {
-                let bucket = self.get_bucket(index).unwrap();
-                let bucket_count = self.buckets[index];
-                eprintln!(
-                    "{:>front_padding$} value of {} belongs in bucket {} ({}) with size of {}",
-                    "Reference".bright_magenta().bold(),
-                    reference_value.bright_yellow().bold(),
-                    index.bright_yellow().bold(),
-                    bucket,
-                    bucket_count.bright_yellow().bold()
-                );
-            } else {
-                eprintln!(
-                    "{:>front_padding$} value of {} is outside graph range",
-                    "Reference".bright_magenta().bold(),
-                    reference_value.bright_yellow().bold(),
-                );
+        if is_debug {
+            eprintln!(
+                "{:>front_padding$} histogram of {} buckets of size {}; occupying {} ({} + 4) rows and {} columns (bar width {})",
+                "Drawing".bright_cyan().bold(),
+                self.buckets.len().bright_yellow().bold(),
+                self.bucket_size.bright_yellow().bold(),
+                (graph_height + 4).bright_yellow().bold(),
+                graph_height,
+                graph_width.bright_yellow().bold(),
+                bar_width.bright_yellow().bold(),
+            );
+
+            if let Some(reference_value) = reference {
+                if let Some(index) = reference_index {
+                    let bucket = self.get_bucket(index).unwrap();
+                    eprintln!(
+                        "{:>front_padding$} value of {} belongs in bucket {} ({})",
+                        "Reference".bright_magenta().bold(),
+                        reference_value.bright_yellow().bold(),
+                        index.bright_yellow().bold(),
+                        bucket,
+                    );
+                } else {
+                    eprintln!(
+                        "{:>front_padding$} value of {} is outside graph range",
+                        "Reference".bright_magenta().bold(),
+                        reference_value.bright_yellow().bold(),
+                    );
+                }
             }
         }
-        eprintln!(
-            "{:>front_padding$} {}",
-            "Y-Axis".bold().bright_blue(),
-            format!("~{:.1}/step", interval_size).italic()
-        );
+        eprintln!("{:>front_padding$} (%)", "Y-Axis".bold().bright_blue(),);
+        let increment = interval_size * 100.0 / self.size as f64;
+        let top_line = (interval_count as f64 + 0.5) * increment;
         eprintln!(
             "{:>front_padding$.0} {}",
             top_line.bold().bright_yellow(),
-            BucketLine::empty(bar_width, self.buckets.len())
+            BucketLine::empty(bar_width, self.buckets.len()) // format!("~{:.1}/step", interval_size).italic()
         );
+        let print_label = |v: f64, line: Option<BucketLine>| {
+            if top_line < 0.1 {
+                eprint!(
+                    "{:>front_padding$.2e}",
+                    precision(v, 3).bold().bright_yellow()
+                );
+            } else {
+                let digits = if top_line < 1.0 {
+                    3
+                } else if top_line < 10.0 {
+                    2
+                } else {
+                    1
+                };
+                eprint!(
+                    "{:>front_padding$.digits$}",
+                    precision(v, 3).bold().bright_yellow()
+                );
+            }
+
+            if let Some(line) = line {
+                eprintln!(" {line}");
+            } else {
+                eprintln!(" {:-<graph_width$}", "".bright_black());
+            }
+        };
+        print_label(top_line, None);
         for i in (0..interval_count).rev() {
             let interval_start = i as f64 * interval_size;
             let line = BucketLine::new(
@@ -674,13 +737,11 @@ impl Buckets {
                 interval_start,
                 interval_size,
                 reference_index,
-                self.buckets.iter().cloned(),
+                (0..self.buckets.len()).map(|i| self.get_normalized_bucket_value(i).unwrap()),
             );
-            eprintln!(
-                "{:>front_padding$.0} {line}",
-                (interval_start + interval_size / 2.0)
-                    .bold()
-                    .bright_yellow()
+            print_label(
+                (interval_start + interval_size / 2.0) * 100.0 / self.size as f64,
+                Some(line),
             );
         }
         eprintln!(
@@ -708,12 +769,12 @@ struct Percentile {
 }
 
 impl Percentile {
-    fn size(&self) -> usize {
-        self.size
+    fn value(&self) -> i64 {
+        self.value
     }
 
-    fn percentage(&self) -> f64 {
-        self.size() as f64 / self.data_size as f64 * 100f64
+    fn size(&self) -> usize {
+        self.size
     }
 
     fn greater_than_count(&self) -> usize {
@@ -722,6 +783,10 @@ impl Percentile {
 
     fn less_than_count(&self) -> usize {
         self.data_size - self.greater_than_count - self.size
+    }
+
+    fn percentage(&self) -> f64 {
+        self.size() as f64 / self.data_size as f64 * 100f64
     }
 
     fn greater_than_percentage(&self) -> f64 {
@@ -761,6 +826,19 @@ struct Percentiles {
 enum PercentileCompare {
     Greater,
     Less,
+}
+
+impl PercentileCompare {
+    fn iterator() -> impl Iterator<Item = PercentileCompare> {
+        [Self::Greater, Self::Less].iter().copied()
+    }
+
+    fn column_name(&self) -> &'static str {
+        match *self {
+            PercentileCompare::Greater => "Greater than",
+            PercentileCompare::Less => "Less than",
+        }
+    }
 }
 
 impl Percentiles {
@@ -861,13 +939,13 @@ impl Percentiles {
         cmp: PercentileCompare,
     ) -> Option<&Percentile> {
         let percentage = percentage.into();
-        if percentage >= 100f64 {
+        if percentage >= 100f64 || self.percentiles.is_empty() {
             return None;
         }
 
         let value = (percentage / 100f64 * self.data_size as f64).round() as usize;
 
-        let idx = self
+        let mut idx = self
             .percentiles
             .binary_search_by(|element| match cmp {
                 PercentileCompare::Greater => match element.greater_than_count().cmp(&value) {
@@ -875,32 +953,23 @@ impl Percentiles {
                     ord => ord,
                 },
                 PercentileCompare::Less => match value.cmp(&element.less_than_count()) {
-                    Ordering::Equal => Ordering::Less,
+                    Ordering::Equal => Ordering::Greater,
                     ord => ord,
                 },
             })
             .unwrap_err();
 
-        match cmp {
-            PercentileCompare::Greater => {
-                if idx >= self.percentiles.len() {
-                    return None;
-                }
-                self.percentiles.get(idx)
-            }
-            PercentileCompare::Less => {
-                if idx == 0 {
-                    return self.percentiles.get(idx).and_then(|p| {
-                        if p.less_than_percentage() >= percentage {
-                            Some(p)
-                        } else {
-                            None
-                        }
-                    });
-                }
-                self.percentiles.get(idx - 1)
+        if let PercentileCompare::Less = cmp {
+            if idx < self.percentiles.len() && self.percentiles[idx].less_than_count() < value {
+                idx = idx.overflowing_sub(1).0;
             }
         }
+
+        if idx >= self.percentiles.len() {
+            return None;
+        }
+
+        self.percentiles.get(idx)
     }
 
     fn last(&self, cmp: PercentileCompare) -> &Percentile {
@@ -977,7 +1046,7 @@ impl Percentiles {
             for i in 0..=3 {
                 let percentage = i * 25;
                 if let Some(p) = self.get_percentile_by_percentage(percentage, cmp) {
-                    value_column_width = value_column_width.max(printed_width(p.value));
+                    value_column_width = value_column_width.max(printed_width_i64(p.value));
                     percentiles.push((PercentileLabel::Percent(percentage as f64, 0), p));
                 } else {
                     break;
@@ -987,7 +1056,7 @@ impl Percentiles {
             let mut iteration = 0;
             let mut curr_highest = 99f64;
             while let Some(p) = self.get_percentile_by_percentage(curr_highest, cmp) {
-                value_column_width = value_column_width.max(printed_width(p.value));
+                value_column_width = value_column_width.max(printed_width_i64(p.value));
                 percentiles.push((PercentileLabel::Percent(curr_highest, iteration), p));
                 curr_highest = 90.0 + curr_highest / 10.0;
                 iteration += 1;
@@ -1045,9 +1114,9 @@ impl Percentiles {
             let mut inverse_column_width = inverse_header.len();
             for (label, percentile) in percentiles.iter() {
                 percentage_column_width = percentage_column_width.max(label.len());
-                range_column_width = range_column_width.max(printed_width(percentile.value));
-                inverse_column_width =
-                    inverse_column_width.max(printed_width(percentile.inverse_count(cmp) as u32));
+                range_column_width = range_column_width.max(printed_width_i64(percentile.value));
+                inverse_column_width = inverse_column_width
+                    .max(printed_width_i64(percentile.inverse_count(cmp) as u32));
             }
             (
                 percentage_column_width,
@@ -1195,7 +1264,185 @@ impl Percentiles {
             "", "", "", "",
         );
     }
+
+    fn print_table(&self, start_width: usize, reference: Option<i64>, _is_debug: bool) {
+        eprintln!(
+            "{:>start_width$} percentile tables; data contains {} unique values",
+            "Drawing".bright_cyan().bold(),
+            self.percentiles.len().bright_yellow().bold(),
+        );
+        if let Some(reference) = reference {
+            let percentile = self.get_percentile_by_value(reference);
+            println!(
+                "{:>start_width$} Value of {} has a likelihood of {}; Greater than {}; Less than {}",
+                "Reference".bright_magenta().bold(),
+                reference
+                    .bold()
+                    .bright_yellow(),
+                format_args!("{}%", precision(percentile.percentage(), 2))
+                    .bold()
+                    .bright_yellow(),
+                format_args!("{}%", precision(percentile.greater_than_percentage(), 2))
+                    .bold()
+                    .bright_yellow(),
+                format_args!("{}%", precision(percentile.less_than_percentage(), 2))
+                    .bold()
+                    .bright_yellow(),
+            );
+        }
+
+        const FIXED_PERCENTILES: &[f64] = &[0.0, 25.0, 50.0, 75.0];
+        let mut percentiles = FIXED_PERCENTILES
+            .iter()
+            .map(|p| {
+                (
+                    *p,
+                    PercentileCompare::iterator()
+                        .map(|cmp| self.get_percentile_by_percentage(*p, cmp))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let mut dynamic_percentile = 99.0;
+        loop {
+            if dynamic_percentile > 99.9999 {
+                break;
+            }
+            let v = PercentileCompare::iterator()
+                .map(|cmp| self.get_percentile_by_percentage(dynamic_percentile, cmp))
+                .collect::<Vec<_>>();
+            let should_stop = v.iter().all(|o| o.is_none());
+            if should_stop {
+                break;
+            }
+            percentiles.push((dynamic_percentile, v));
+            dynamic_percentile = dynamic_percentile / 10.0 + 90.0;
+        }
+
+        let v = PercentileCompare::iterator()
+            .map(|cmp| Some(self.last(cmp)))
+            .collect::<Vec<_>>();
+        percentiles.push((f64::MAX, v));
+
+        let transposed = percentiles
+            .iter()
+            .map(|(_, v)| v.iter().collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+
+        const INNER_COLUMN_NAMES: &[&str] = &["Value", "Actual(%)"];
+        let separator = "┄";
+        let column_widths = PercentileCompare::iterator()
+            .enumerate()
+            .map(|(i, cmp)| {
+                let inner_column_widths = vec![
+                    std::cmp::max(
+                        INNER_COLUMN_NAMES[0].len(),
+                        transposed
+                            .iter()
+                            .map(|v| v[i].map_or(0, |p| printed_width_i64(p.value())))
+                            .max()
+                            .unwrap_or(0),
+                    ),
+                    std::cmp::max(
+                        INNER_COLUMN_NAMES[1].len(),
+                        transposed
+                            .iter()
+                            .map(|v| {
+                                v[i].map_or(0, |p| {
+                                    printed_width_f64(precision(p.inverse_percentage(cmp), 3))
+                                })
+                            })
+                            .max()
+                            .unwrap_or(0),
+                    ),
+                ];
+                (
+                    std::cmp::max(
+                        cmp.column_name().len(),
+                        inner_column_widths.iter().cloned().sum::<usize>()
+                            + (inner_column_widths.len() - 1) * (separator.len() + 1),
+                    ),
+                    inner_column_widths,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // let column_widths = PercentileCompare::iterator()
+        //     .enumerate()
+        //     .map(|(i, cmp)| {
+        //         std::cmp::max(
+        //             "Value  Actual(%)".len(),
+        //             widths.iter().map(|v| v[i]).max().unwrap_or(0),
+        //         )
+        //     })
+        //     .collect::<Vec<_>>();
+
+        let separator = separator.bright_black();
+        print!("{:>start_width$}", "P%".bright_cyan().bold(),);
+        for (i, cmp) in PercentileCompare::iterator().enumerate() {
+            let (width, _) = &column_widths[i];
+            print!(
+                " {} {:^width$} ",
+                separator,
+                cmp.column_name().bright_yellow().bold(),
+            );
+        }
+        println!();
+        print!("{:>start_width$}", "");
+        for (i, _) in PercentileCompare::iterator().enumerate() {
+            let (_, v) = &column_widths[i];
+            for (width, name) in v.iter().zip(INNER_COLUMN_NAMES.iter()) {
+                print!(" {} {:^width$} ", separator, name.bright_yellow().bold(),);
+            }
+        }
+        println!();
+
+        let separator = " ".bright_black();
+        for (percentile, v) in percentiles {
+            let label = if percentile == f64::MAX {
+                "Last".into()
+            } else {
+                format!("{percentile}%")
+            };
+            print!("{:>start_width$} {}", label.bright_cyan().bold(), separator,);
+            for (i, o) in v.into_iter().enumerate() {
+                let (full_width, inner_widths) = &column_widths[i];
+                if let Some(p) = o {
+                    let first_inner_column_width = inner_widths[0];
+                    let second_inner_column_width = inner_widths[1];
+                    print!(
+                        " {:>first_inner_column_width$} {} {:>second_inner_column_width$} {}  ",
+                        p.value(),
+                        separator,
+                        p.value(),
+                        separator
+                    );
+                } else {
+                    print!(" {:>full_width$} {}", "", separator);
+                }
+            }
+            println!();
+        }
+    }
 }
+
+// struct Statistics {
+//     mean: f64,
+//     median: i64,
+//     mode: i64,
+// }
+
+// impl Statistics {
+//     fn from_data(mut data: Vec<i64>) -> Self {
+//         data.sort();
+//         Self {
+//             buckets: Buckets::from_data(&data),
+//             sorted_data: data,
+//             reference: None,
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -1205,19 +1452,21 @@ mod tests {
 
     #[test]
     fn test_printed_width() {
-        assert_eq!(printed_width(0), 1);
-        assert_eq!(printed_width(-1), 2);
-        assert_eq!(printed_width(12321313), 8);
-        assert_eq!(printed_width(000010), 2);
-        assert_eq!(printed_width(10002), 5);
+        assert_eq!(printed_width_i64(0), 1);
+        assert_eq!(printed_width_i64(-1), 2);
+        assert_eq!(printed_width_i64(12321313), 8);
+        assert_eq!(printed_width_i64(10), 2);
+        assert_eq!(printed_width_i64(10002), 5);
     }
 
     #[test]
     fn test_which() {
-        let buckets = Buckets::from_data(&vec![1, 1, 2, 2, 3, 3, 4, 4, 5, 5]);
+        let mut buckets = Buckets::from_range(1, 5);
+        buckets.fill(&vec![1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 7]);
         assert_eq!(buckets.which(1), Some(0));
         assert_eq!(buckets.which(0), None);
         assert_eq!(buckets.which(2), Some(1));
+        assert_eq!(buckets.which(7), None);
     }
 
     #[test]
@@ -1394,14 +1643,16 @@ mod tests {
         let percentile = percentiles.get_percentile_by_value(9);
         println!("{:?}", percentile.greater_than_percentage());
         println!("{:?}", percentile.less_than_percentage());
-        // assert_matches!(
-        //     percentiles.get_percentile_by_value(1),
-        //     Percentile {
-        //         value: 1,
-        //         size: 2,
-        //         greater_than_count: 0,
-        //         data_size: 8
-        //     }
-        // );
+        assert_matches!(
+            percentiles.get_percentile_by_value(1),
+            Percentile {
+                value: 1,
+                size: 0,
+                greater_than_count: 1,
+                data_size: 10,
+                first: 0,
+                last: 20
+            }
+        );
     }
 }

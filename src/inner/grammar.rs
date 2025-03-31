@@ -3,15 +3,10 @@ use core::fmt;
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
 use std::{
+    io::Write,
     rc::Rc,
     time::{Duration, Instant},
 };
-
-#[derive(Debug, Clone)]
-pub enum ExecOutput {
-    Value(i64),
-    Array(Vec<i64>),
-}
 
 fn vi_to_string(v: &[i64]) -> String {
     format!(
@@ -23,15 +18,21 @@ fn vi_to_string(v: &[i64]) -> String {
     )
 }
 
+#[derive(Debug, Clone)]
+pub enum ExecOutput {
+    Value(i64),
+    Array(Vec<i64>),
+}
+
 impl ExecOutput {
-    pub fn as_value(&self) -> i64 {
+    pub fn value(&self) -> i64 {
         match self {
             ExecOutput::Value(n) => *n,
             ExecOutput::Array(vec) => vec.iter().sum::<i64>(),
         }
     }
 
-    pub fn as_array(&self) -> Result<Vec<i64>, String> {
+    pub fn array(&self) -> Result<Vec<i64>, String> {
         match self {
             ExecOutput::Value(n) => Err(format!("Expected array, but got Value({}) instead", n)),
             ExecOutput::Array(vec) => Ok(vec.clone()),
@@ -87,8 +88,8 @@ pub struct ExecDetails {
 type ExecResultWithDetails = Result<ExecDetails, String>;
 
 impl ExecDetails {
-    pub fn as_value(&self) -> i64 {
-        self.output.as_value()
+    pub fn value(&self) -> i64 {
+        self.output.value()
     }
 }
 
@@ -122,7 +123,7 @@ impl fmt::Display for ExecDetails {
                     write!(f, "+(...) => ")?;
                 }
             }
-            write!(f, "{}", self.output.as_value().bold())
+            write!(f, "{}", self.output.value().bold())
         } else {
             write!(
                 f,
@@ -198,14 +199,68 @@ impl fmt::Display for TestDetails {
     }
 }
 
-type VoidExec = Box<dyn Fn(&mut dyn RngCore) -> ExecResult>;
-type VoidToString = Box<dyn Fn() -> String>;
-type UnaryNumberExec = Box<dyn Fn(i64, &mut dyn RngCore) -> ExecResult>;
-type UnaryNumberToString = Box<dyn Fn(i64) -> String>;
-type UnaryArrayExec = Box<dyn Fn(&Vec<i64>, &mut dyn RngCore) -> ExecResult>;
-type UnaryArrayToString = Box<dyn Fn(&Vec<i64>) -> String>;
-type BinaryExec = Box<dyn Fn(i64, i64, &mut dyn RngCore) -> ExecResult>;
-type BinaryToString = Box<dyn Fn(i64, i64) -> String>;
+#[derive(Debug, Clone)]
+pub struct MinMax {
+    min: i64,
+    max: i64,
+}
+
+pub enum MinMaxOutput {
+    Value(MinMax),
+    Array(Vec<MinMax>),
+}
+
+type MinMaxResult = Result<MinMaxOutput, String>;
+
+impl MinMaxOutput {
+    pub fn value(&self) -> MinMax {
+        match self {
+            MinMaxOutput::Value(m) => m.clone(),
+            MinMaxOutput::Array(vec) => {
+                vec.iter().fold(MinMax { min: 0, max: 0 }, |acc, x| MinMax {
+                    min: acc.min + x.min,
+                    max: acc.max + x.max,
+                })
+            }
+        }
+    }
+
+    pub fn array(&self) -> Result<Vec<MinMax>, String> {
+        match self {
+            MinMaxOutput::Value(m) => {
+                Err(format!("Expected array, but got Value({:?}) instead", m))
+            }
+            MinMaxOutput::Array(vec) => Ok(vec.clone()),
+        }
+    }
+}
+
+macro_rules! exec_fn {
+    () => {
+        Box<dyn Fn(&mut dyn RngCore) -> ExecResult>
+    };
+    ($($T:ty), *) => {
+        Box<dyn Fn($($T), *, &mut dyn RngCore) -> ExecResult>
+    };
+}
+
+macro_rules! min_max_fn {
+    () => {
+        Box<dyn Fn() -> MinMaxResult>
+    };
+    ($($T:ty), *) => {
+        Box<dyn Fn($($T), *) -> MinMaxResult>
+    };
+}
+
+macro_rules! to_string_fn {
+    () => {
+        Box<dyn Fn() -> String>
+    };
+    ($($T:ty), *) => {
+        Box<dyn Fn($($T), *) -> String>
+    };
+}
 
 pub(crate) enum GrammarRule {
     Aggregate {
@@ -216,27 +271,30 @@ pub(crate) enum GrammarRule {
         name: &'static str,
         number: i64,
     },
-    Void {
+    Generator {
         name: &'static str,
         size: usize,
-        exec: VoidExec,
-        to_string: VoidToString,
+        exec: exec_fn!(),
+        min_max: min_max_fn!(),
+        to_string: to_string_fn!(),
     },
     UnaryNumber {
         name: &'static str,
         operation: String,
         size: usize,
         child: Box<GrammarRule>,
-        exec: UnaryNumberExec,
-        to_string: UnaryNumberToString,
+        exec: exec_fn!(i64),
+        min_max: min_max_fn!(MinMax),
+        to_string: to_string_fn!(i64),
     },
     UnaryArray {
         name: &'static str,
         operation: String,
         size: usize,
         child: Box<GrammarRule>,
-        exec: UnaryArrayExec,
-        to_string: UnaryArrayToString,
+        exec: exec_fn!(&Vec<i64>),
+        min_max: min_max_fn!(&Vec<MinMax>),
+        to_string: to_string_fn!(&Vec<i64>),
     },
     Binary {
         name: &'static str,
@@ -244,15 +302,16 @@ pub(crate) enum GrammarRule {
         size: usize,
         lhs: Box<GrammarRule>,
         rhs: Box<GrammarRule>,
-        exec: BinaryExec,
-        to_string: BinaryToString,
+        exec: exec_fn!(i64, i64),
+        min_max: min_max_fn!(MinMax, MinMax),
+        to_string: to_string_fn!(i64, i64),
     },
 }
 
 impl fmt::Display for GrammarRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GrammarRule::Aggregate { name: _, children } => {
+            GrammarRule::Aggregate { children, .. } => {
                 write!(f, "(")?;
                 for (i, child) in children.iter().enumerate() {
                     if i != 0usize {
@@ -262,46 +321,19 @@ impl fmt::Display for GrammarRule {
                 }
                 write!(f, ")")
             }
-            GrammarRule::Number { name: _, number } => write!(f, "{}", number),
-            GrammarRule::Void {
-                name: _,
-                size: _,
-                exec: _,
-                to_string,
-            } => write!(f, "{}", to_string()),
-            GrammarRule::UnaryNumber {
-                name,
-                operation: _,
-                size: _,
-                child,
-                exec: _,
-                to_string: _,
-            } => {
+            GrammarRule::Number { number, .. } => write!(f, "{}", number),
+            GrammarRule::Generator { to_string, .. } => write!(f, "{}", to_string()),
+            GrammarRule::UnaryNumber { name, child, .. } => {
                 write!(f, "{}(", name)?;
                 child.fmt(f)?;
                 write!(f, ")")
             }
-            GrammarRule::UnaryArray {
-                name,
-                operation: _,
-                size: _,
-                child,
-                exec: _,
-                to_string: _,
-            } => {
+            GrammarRule::UnaryArray { name, child, .. } => {
                 write!(f, "{}(", name)?;
                 child.fmt(f)?;
                 write!(f, ")")
             }
-            GrammarRule::Binary {
-                name,
-                operation: _,
-                size: _,
-                lhs,
-                rhs,
-                exec: _,
-                to_string: _,
-            } => {
+            GrammarRule::Binary { name, lhs, rhs, .. } => {
                 write!(f, "{}(", name)?;
                 lhs.fmt(f)?;
                 write!(f, ", ")?;
@@ -323,7 +355,7 @@ pub struct GrammarTestOptions {
     pub test_size: usize,
 }
 
-type StackExec = Rc<
+type ExecStackFn = Rc<
     dyn Fn(
         &Vec<ExecOutput>,
         &mut dyn rand::RngCore,
@@ -335,7 +367,7 @@ type StackExec = Rc<
 struct StackFn {
     name: &'static str,
     operation: String,
-    exec: StackExec,
+    exec: ExecStackFn,
 }
 
 impl fmt::Display for StackFn {
@@ -373,6 +405,12 @@ impl GrammarRule {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
             exec: Box::new(move |lhs, rhs, _| Ok(ExecOutput::Value(lhs + rhs))),
+            min_max: Box::new(move |lhs, rhs| {
+                Ok(MinMaxOutput::Value(MinMax {
+                    min: lhs.min + rhs.min,
+                    max: lhs.max + rhs.max,
+                }))
+            }),
             to_string: Box::new(move |lhs, rhs| format!("{} + {}", lhs, rhs)),
         }
     }
@@ -385,6 +423,12 @@ impl GrammarRule {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
             exec: Box::new(move |lhs, rhs, _| Ok(ExecOutput::Value(lhs - rhs))),
+            min_max: Box::new(move |lhs, rhs| {
+                Ok(MinMaxOutput::Value(MinMax {
+                    min: lhs.min - rhs.max,
+                    max: lhs.max - rhs.min,
+                }))
+            }),
             to_string: Box::new(move |lhs, rhs| format!("{} - {}", lhs, rhs)),
         }
     }
@@ -397,6 +441,19 @@ impl GrammarRule {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
             exec: Box::new(move |lhs, rhs, _| Ok(ExecOutput::Value(lhs * rhs))),
+            min_max: Box::new(move |lhs, rhs| {
+                let possible_values = [
+                    lhs.min * rhs.min,
+                    lhs.min * rhs.max,
+                    lhs.max * rhs.min,
+                    lhs.max * lhs.max,
+                ];
+
+                Ok(MinMaxOutput::Value(MinMax {
+                    min: *possible_values.iter().min().unwrap(),
+                    max: *possible_values.iter().max().unwrap(),
+                }))
+            }),
             to_string: Box::new(move |lhs, rhs| format!("{} x {}", lhs, rhs)),
         }
     }
@@ -417,10 +474,35 @@ impl GrammarRule {
                 }
                 let mut new = rhs.clone();
                 new.sort_by(|a, b| b.cmp(a));
-                while new.len() != new_size {
-                    new.pop();
-                }
+                new.resize(new_size, 0);
                 Ok(ExecOutput::Array(new))
+            }),
+            min_max: Box::new(move |rhs| {
+                let new_size = lhs as usize;
+                if rhs.len() < new_size {
+                    return Err(format!(
+                        "Unexpected array length on right hand side; expected length of {}",
+                        lhs
+                    ));
+                }
+                let mut min_values = rhs.iter().map(|m| m.min).collect::<Vec<_>>();
+                let mut max_values = rhs.iter().map(|m| m.max).collect::<Vec<_>>();
+
+                min_values.sort_by(|a, b| b.cmp(a));
+                max_values.sort_by(|a, b| b.cmp(a));
+                min_values.resize(new_size, 0);
+                max_values.resize(new_size, 0);
+
+                Ok(MinMaxOutput::Array(
+                    min_values
+                        .iter()
+                        .zip(max_values.iter())
+                        .map(|m| MinMax {
+                            min: *m.0,
+                            max: *m.1,
+                        })
+                        .collect::<_>(),
+                ))
             }),
             to_string: Box::new(move |rhs| format!("{}A{}", lhs, vi_to_string(rhs))),
         }
@@ -447,6 +529,33 @@ impl GrammarRule {
                 }
                 Ok(ExecOutput::Array(new))
             }),
+            min_max: Box::new(move |rhs| {
+                let new_size = lhs as usize;
+                if rhs.len() < new_size {
+                    return Err(format!(
+                        "Unexpected array length on right hand side; expected length of {}",
+                        lhs
+                    ));
+                }
+                let mut min_values = rhs.iter().map(|m| m.min).collect::<Vec<_>>();
+                let mut max_values = rhs.iter().map(|m| m.max).collect::<Vec<_>>();
+
+                min_values.sort();
+                max_values.sort();
+                min_values.resize(new_size, 0);
+                max_values.resize(new_size, 0);
+
+                Ok(MinMaxOutput::Array(
+                    min_values
+                        .iter()
+                        .zip(max_values.iter())
+                        .map(|m| MinMax {
+                            min: *m.0,
+                            max: *m.1,
+                        })
+                        .collect::<_>(),
+                ))
+            }),
             to_string: Box::new(move |rhs| format!("{}Z{}", lhs, vi_to_string(rhs))),
         }
     }
@@ -465,6 +574,12 @@ impl GrammarRule {
                     r.push(rhs[i]);
                 }
                 Ok(ExecOutput::Array(r))
+            }),
+            min_max: Box::new(move |rhs| {
+                let min = rhs.iter().map(|o| o.min).min().unwrap();
+                let max = rhs.iter().map(|o| o.max).max().unwrap();
+                let new_size = lhs as usize;
+                Ok(MinMaxOutput::Array(vec![MinMax { min, max }; new_size]))
             }),
             to_string: Box::new(move |rhs| format!("{}C{}", lhs, vi_to_string(rhs))),
         }
@@ -486,17 +601,42 @@ impl GrammarRule {
                     ));
                 }
                 v.shuffle(rng);
-                while v.len() != new_size {
-                    v.pop();
-                }
+                v.resize(new_size, 0);
                 Ok(ExecOutput::Array(v))
+            }),
+            min_max: Box::new(move |rhs| {
+                let new_size = lhs as usize;
+                if rhs.len() < new_size {
+                    return Err(format!(
+                        "Unexpected array length on right hand side; expected length of {}",
+                        lhs
+                    ));
+                }
+                let mut min_values = rhs.iter().map(|m| m.min).collect::<Vec<_>>();
+                let mut max_values = rhs.iter().map(|m| m.max).collect::<Vec<_>>();
+
+                min_values.sort();
+                max_values.sort_by(|a, b| b.cmp(a));
+                min_values.resize(new_size, 0);
+                max_values.resize(new_size, 0);
+
+                Ok(MinMaxOutput::Array(
+                    max_values
+                        .iter()
+                        .zip(min_values.iter())
+                        .map(|m| MinMax {
+                            min: *m.0,
+                            max: *m.1,
+                        })
+                        .collect::<_>(),
+                ))
             }),
             to_string: Box::new(move |rhs| format!("{}P{}", lhs, vi_to_string(rhs))),
         }
     }
 
     fn die(lhs: u64, rhs: u64) -> Self {
-        Self::Void {
+        Self::Generator {
             name: "Die",
             size: lhs as usize,
             exec: Box::new(move |rng| {
@@ -507,6 +647,12 @@ impl GrammarRule {
                     r.push(x as i64);
                 }
                 Ok(ExecOutput::Array(r))
+            }),
+            min_max: Box::new(move || {
+                let min = 1;
+                let max = rhs as i64;
+                let new_size = lhs as usize;
+                Ok(MinMaxOutput::Array(vec![MinMax { min, max }; new_size]))
             }),
             to_string: Box::new(move || {
                 format!(
@@ -525,45 +671,51 @@ impl GrammarRule {
             size: 1,
             child: Box::new(rhs),
             exec: Box::new(move |rhs, _| Ok(ExecOutput::Value(-rhs))),
+            min_max: Box::new(move |rhs| {
+                let min = -rhs.max;
+                let max = -rhs.min;
+                Ok(MinMaxOutput::Value(MinMax { min, max }))
+            }),
             to_string: Box::new(move |rhs| format!("-({})", rhs)),
         }
     }
 
     fn len(&self) -> usize {
         match &self {
-            GrammarRule::Aggregate { name: _, children } => children.len(),
-            GrammarRule::Number { name: _, number: _ } => 1,
-            GrammarRule::Void {
-                name: _,
-                size,
-                exec: _,
-                to_string: _,
-            } => *size,
-            GrammarRule::UnaryNumber {
-                name: _,
-                operation: _,
-                size,
-                child: _,
-                exec: _,
-                to_string: _,
-            } => *size,
-            GrammarRule::UnaryArray {
-                name: _,
-                operation: _,
-                size,
-                child: _,
-                exec: _,
-                to_string: _,
-            } => *size,
+            GrammarRule::Aggregate { children, .. } => children.len(),
+            GrammarRule::Number { .. } => 1,
+            GrammarRule::Generator { size, .. } => *size,
+            GrammarRule::UnaryNumber { size, .. } => *size,
+            GrammarRule::UnaryArray { size, .. } => *size,
+            GrammarRule::Binary { size, .. } => *size,
+        }
+    }
+
+    fn min_max(&self) -> MinMaxResult {
+        match &self {
+            GrammarRule::Aggregate { children, .. } => Ok(MinMaxOutput::Array(
+                children
+                    .iter()
+                    .map(|c| c.min_max().map(|o| o.value()))
+                    .collect::<Result<Vec<MinMax>, String>>()?,
+            )),
+            GrammarRule::Number { number, .. } => Ok(MinMaxOutput::Value(MinMax {
+                min: *number,
+                max: *number,
+            })),
+            GrammarRule::Generator { min_max, .. } => min_max(),
+            GrammarRule::UnaryNumber { child, min_max, .. } => {
+                min_max(child.min_max().map(|o| o.value())?)
+            }
+            GrammarRule::UnaryArray { child, min_max, .. } => {
+                min_max(&child.min_max().and_then(|o| o.array())?)
+            }
             GrammarRule::Binary {
-                name: _,
-                operation: _,
-                size,
-                lhs: _,
-                rhs: _,
-                exec: _,
-                to_string: _,
-            } => *size,
+                lhs, rhs, min_max, ..
+            } => min_max(
+                lhs.min_max().map(|o| o.value())?,
+                rhs.min_max().map(|o| o.value())?,
+            ),
         }
     }
 
@@ -581,7 +733,7 @@ impl GrammarRule {
                         Ok(ExecOutput::Array(
                             indices
                                 .iter()
-                                .map(|i| stack.get(*i).unwrap().as_value())
+                                .map(|i| stack.get(*i).unwrap().value())
                                 .collect(),
                         )
                         .with_line_detail(name, None))
@@ -595,11 +747,11 @@ impl GrammarRule {
                     Ok(ExecOutput::Value(number).with_line_detail(name, None))
                 }),
             },
-            GrammarRule::Void {
+            GrammarRule::Generator {
                 name,
-                size: _,
                 exec,
                 to_string,
+                ..
             } => StackFn {
                 name,
                 operation: (to_string)(),
@@ -610,17 +762,17 @@ impl GrammarRule {
             GrammarRule::UnaryNumber {
                 name,
                 operation,
-                size: _,
                 child,
                 exec,
                 to_string,
+                ..
             } => {
                 let index = child.dfs(callstack);
                 StackFn {
                     name,
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                        let rhs = stack.get(index).unwrap().as_value();
+                        let rhs = stack.get(index).unwrap().value();
                         Ok(exec(rhs, rng)?
                             .with_line_detail(name, options.is_debug.then(|| to_string(rhs))))
                     }),
@@ -629,17 +781,17 @@ impl GrammarRule {
             GrammarRule::UnaryArray {
                 name,
                 operation,
-                size: _,
                 child,
                 exec,
                 to_string,
+                ..
             } => {
                 let index = child.dfs(callstack);
                 StackFn {
                     name,
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                        let v = &stack.get(index).unwrap().as_array()?;
+                        let v = &stack.get(index).unwrap().array()?;
                         Ok(exec(v, rng)?
                             .with_line_detail(name, options.is_debug.then(|| to_string(v))))
                     }),
@@ -648,11 +800,11 @@ impl GrammarRule {
             GrammarRule::Binary {
                 name,
                 operation,
-                size: _,
                 lhs,
                 rhs,
                 exec,
                 to_string,
+                ..
             } => {
                 let lhs_index = lhs.dfs(callstack);
                 let rhs_index = rhs.dfs(callstack);
@@ -660,8 +812,8 @@ impl GrammarRule {
                     name,
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                        let lhs = stack.get(lhs_index).unwrap().as_value();
-                        let rhs = stack.get(rhs_index).unwrap().as_value();
+                        let lhs = stack.get(lhs_index).unwrap().value();
+                        let rhs = stack.get(rhs_index).unwrap().value();
                         Ok(exec(lhs, rhs, rng)?
                             .with_line_detail(name, options.is_debug.then(|| to_string(lhs, rhs))))
                     }),
@@ -984,6 +1136,7 @@ pub(crate) struct Grammar {
     // root: GrammarRule,
     compiled_string: String,
     callstack: Vec<StackFn>,
+    min_max: MinMax,
 }
 
 impl Grammar {
@@ -1001,12 +1154,22 @@ impl Grammar {
         }
         let mut callstack: Vec<StackFn> = vec![];
         let compiled_string = result.to_string();
+        let min_max = result.min_max().unwrap().value();
         let _ = result.dfs(&mut callstack);
 
         Ok(Self {
             compiled_string,
             callstack,
+            min_max,
         })
+    }
+
+    pub(crate) fn min(&self) -> i64 {
+        self.min_max.min
+    }
+
+    pub(crate) fn max(&self) -> i64 {
+        self.min_max.max
     }
 
     pub(crate) fn exec(
@@ -1063,7 +1226,6 @@ impl Grammar {
                 None
             };
 
-            // const HORIZONTAL_BAR_SECTIONS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
             let stack_fn_start = Instant::now();
             let interval = if n < 100 { 1 } else { n / 100 };
             for (i, stack) in stacks.iter_mut().enumerate() {
@@ -1117,10 +1279,7 @@ impl Grammar {
             start_time.elapsed().as_secs_f32().bold()
         );
         Ok(TestDetails {
-            output: stacks
-                .into_iter()
-                .map(|s| s[s.len() - 1].as_value())
-                .collect(),
+            output: stacks.into_iter().map(|s| s[s.len() - 1].value()).collect(),
             time_taken: start_time.elapsed(),
             details,
         })
@@ -1159,7 +1318,7 @@ mod tests {
 
     #[test]
     fn test_parse_unknown_token() {
-        let x = "abc";
+        let x = "bbc";
         let result = Grammar::parse(x);
         assert_matches!(
             result,
@@ -1172,12 +1331,10 @@ mod tests {
         );
         if let Err(GrammarError {
             error_type: GrammarErrorType::UnknownToken(s),
-            error_index: _,
-            error_length: _,
-            input_string: _,
+            ..
         }) = result
         {
-            assert_eq!(s.as_str(), "b");
+            assert_eq!(s.as_str(), "bb");
         }
     }
 
@@ -1216,5 +1373,36 @@ mod tests {
                 input_string: _,
             })
         );
+    }
+
+    #[test]
+    fn test_min_max() {
+        let x = "3d20";
+        let result = Grammar::parse(x);
+        assert!(result.is_ok());
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 3);
+        assert_eq!(grammar.max(), 60);
+
+        let x = "30d200";
+        let result = Grammar::parse(x);
+        assert!(result.is_ok());
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 30);
+        assert_eq!(grammar.max(), 6000);
+
+        let x = "a3d20";
+        let result = Grammar::parse(x);
+        assert!(result.is_ok());
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 1);
+        assert_eq!(grammar.max(), 20);
+
+        let x = "z3d20";
+        let result = Grammar::parse(x);
+        assert!(result.is_ok());
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 1);
+        assert_eq!(grammar.max(), 20);
     }
 }

@@ -240,7 +240,7 @@ pub fn main() {
                             );
 
                             let percentiles = Percentiles::from_data(result.output).unwrap();
-                            percentiles.print(start_width, matches.get_one("reference").copied());
+                            // percentiles.print(start_width, matches.get_one("reference").copied());
                             // let percentiles = Percentiles::from_data(result.output);
                             percentiles.print_table(start_width, reference, is_debug);
                         }
@@ -679,7 +679,7 @@ impl Buckets {
             if let Some(reference_value) = reference {
                 if let Some(index) = reference_index {
                     let bucket = self.get_bucket(index).unwrap();
-                    eprintln!(
+                    println!(
                         "{:>front_padding$} value of {} belongs in bucket {} ({})",
                         "Reference".bright_magenta().bold(),
                         reference_value.bright_yellow().bold(),
@@ -687,7 +687,7 @@ impl Buckets {
                         bucket,
                     );
                 } else {
-                    eprintln!(
+                    println!(
                         "{:>front_padding$} value of {} is outside graph range",
                         "Reference".bright_magenta().bold(),
                         reference_value.bright_yellow().bold(),
@@ -695,14 +695,9 @@ impl Buckets {
                 }
             }
         }
-        eprintln!("{:>front_padding$} (%)", "Y-Axis".bold().bright_blue(),);
+        println!("{:>front_padding$} (%)", "Y-Axis".bold().bright_blue(),);
         let increment = interval_size * 100.0 / self.size as f64;
         let top_line = (interval_count as f64 + 0.5) * increment;
-        eprintln!(
-            "{:>front_padding$.0} {}",
-            top_line.bold().bright_yellow(),
-            BucketLine::empty(bar_width, self.buckets.len()) // format!("~{:.1}/step", interval_size).italic()
-        );
         let print_label = |v: f64, line: Option<BucketLine>| {
             if top_line < 0.1 {
                 eprint!(
@@ -726,7 +721,7 @@ impl Buckets {
             if let Some(line) = line {
                 eprintln!(" {line}");
             } else {
-                eprintln!(" {:-<graph_width$}", "".bright_black());
+                eprintln!(" {}", BucketLine::empty(bar_width, self.buckets.len()));
             }
         };
         print_label(top_line, None);
@@ -744,13 +739,13 @@ impl Buckets {
                 Some(line),
             );
         }
-        eprintln!(
+        println!(
             "{:>front_padding$.0} {}",
             "",
             BucketLine::base(bar_width, self.buckets.len(), reference_index)
         );
 
-        eprintln!(
+        println!(
             "{:>front_padding$.0} {}",
             "",
             self.get_x_axis(bar_width).bold().bright_yellow()
@@ -1271,25 +1266,38 @@ impl Percentiles {
             "Drawing".bright_cyan().bold(),
             self.percentiles.len().bright_yellow().bold(),
         );
-        if let Some(reference) = reference {
-            let percentile = self.get_percentile_by_value(reference);
+
+        let reference_percentile = reference.map(|i| self.get_percentile_by_value(i));
+
+        if let Some(percentile) = &reference_percentile {
             println!(
                 "{:>start_width$} Value of {} has a likelihood of {}; Greater than {}; Less than {}",
                 "Reference".bright_magenta().bold(),
-                reference
+                percentile.value()
                     .bold()
                     .bright_yellow(),
-                format_args!("{}%", precision(percentile.percentage(), 2))
+                format_args!("{}%", precision(percentile.percentage(), 3))
                     .bold()
                     .bright_yellow(),
-                format_args!("{}%", precision(percentile.greater_than_percentage(), 2))
+                format_args!("{}%", precision(percentile.greater_than_percentage(), 3))
                     .bold()
                     .bright_yellow(),
-                format_args!("{}%", precision(percentile.less_than_percentage(), 2))
+                format_args!("{}%", precision(percentile.less_than_percentage(), 3))
                     .bold()
                     .bright_yellow(),
             );
         }
+
+        let map_percentile =
+            |percentile: Option<&Percentile>, cmp: PercentileCompare, digits: Option<u32>| {
+                percentile.map(|p| {
+                    (
+                        p.value(),
+                        precision(p.inverse_percentage(cmp), digits.unwrap_or(3)),
+                        p.inverse_count(cmp),
+                    )
+                })
+            };
 
         const FIXED_PERCENTILES: &[f64] = &[0.0, 25.0, 50.0, 75.0];
         let mut percentiles = FIXED_PERCENTILES
@@ -1298,19 +1306,28 @@ impl Percentiles {
                 (
                     *p,
                     PercentileCompare::iterator()
-                        .map(|cmp| self.get_percentile_by_percentage(*p, cmp))
+                        .map(|cmp| {
+                            map_percentile(self.get_percentile_by_percentage(*p, cmp), cmp, Some(3))
+                        })
                         .collect::<Vec<_>>(),
                 )
             })
             .collect::<Vec<_>>();
 
         let mut dynamic_percentile = 99.0;
+        let mut loop_count = 0;
         loop {
-            if dynamic_percentile > 99.9999 {
+            if dynamic_percentile > 99.999 {
                 break;
             }
             let v = PercentileCompare::iterator()
-                .map(|cmp| self.get_percentile_by_percentage(dynamic_percentile, cmp))
+                .map(|cmp| {
+                    map_percentile(
+                        self.get_percentile_by_percentage(dynamic_percentile, cmp),
+                        cmp,
+                        Some(loop_count + 3),
+                    )
+                })
                 .collect::<Vec<_>>();
             let should_stop = v.iter().all(|o| o.is_none());
             if should_stop {
@@ -1318,41 +1335,79 @@ impl Percentiles {
             }
             percentiles.push((dynamic_percentile, v));
             dynamic_percentile = dynamic_percentile / 10.0 + 90.0;
+            loop_count += 1;
         }
 
         let v = PercentileCompare::iterator()
-            .map(|cmp| Some(self.last(cmp)))
+            .map(|cmp| map_percentile(Some(self.last(cmp)), cmp, Some(7)))
             .collect::<Vec<_>>();
-        percentiles.push((f64::MAX, v));
+        let last_values = v.iter().map(|o| Some(o.unwrap().0)).collect::<Vec<_>>();
+        let last_percentile_values = percentiles
+            .last()
+            .map(|(_, v)| v.iter().map(|o| o.map(|(v, _, _)| v)).collect::<Vec<_>>())
+            .unwrap();
+        if last_percentile_values
+            .into_iter()
+            .zip(last_values.into_iter())
+            .any(|(lhs, rhs)| lhs == rhs)
+        {
+            percentiles.last_mut().unwrap().0 = f64::MAX;
+            percentiles.last_mut().unwrap().1 = v;
+        } else {
+            percentiles.push((f64::MAX, v));
+        }
 
-        let transposed = percentiles
-            .iter()
-            .map(|(_, v)| v.iter().collect::<Vec<_>>())
-            .collect::<Vec<_>>();
+        if let Some(p) = &reference_percentile {
+            PercentileCompare::iterator()
+                .enumerate()
+                .for_each(|(i, cmp)| {
+                    let inverse_count = p.inverse_count(cmp);
+                    let idx = percentiles
+                        .binary_search_by(|(_, element)| {
+                            if let Some((v, _, count)) = element[i] {
+                                return match count.cmp(&inverse_count) {
+                                    Ordering::Equal => match cmp {
+                                        PercentileCompare::Greater => match v.cmp(&p.value) {
+                                            Ordering::Equal => Ordering::Less,
+                                            ord => ord,
+                                        },
+                                        PercentileCompare::Less => match v.cmp(&p.value) {
+                                            Ordering::Equal => Ordering::Greater,
+                                            Ordering::Less => Ordering::Greater,
+                                            Ordering::Greater => Ordering::Less,
+                                        },
+                                    },
+                                    ord => ord,
+                                };
+                            }
+                            Ordering::Greater
+                        })
+                        .unwrap_err();
+
+                    let mut v: Vec<Option<(i64, f64, usize)>> = vec![None; 2];
+                    v[i] = map_percentile(Some(p), cmp, Some(3));
+                    percentiles.insert(idx, (f64::NAN, v));
+                });
+        }
 
         const INNER_COLUMN_NAMES: &[&str] = &["Value", "Actual(%)"];
-        let separator = "┄";
         let column_widths = PercentileCompare::iterator()
             .enumerate()
             .map(|(i, cmp)| {
                 let inner_column_widths = vec![
                     std::cmp::max(
                         INNER_COLUMN_NAMES[0].len(),
-                        transposed
+                        percentiles
                             .iter()
-                            .map(|v| v[i].map_or(0, |p| printed_width_i64(p.value())))
+                            .map(|(_, v)| v[i].map_or(0, |c| printed_width_i64(c.0)))
                             .max()
                             .unwrap_or(0),
                     ),
                     std::cmp::max(
                         INNER_COLUMN_NAMES[1].len(),
-                        transposed
+                        percentiles
                             .iter()
-                            .map(|v| {
-                                v[i].map_or(0, |p| {
-                                    printed_width_f64(precision(p.inverse_percentage(cmp), 3))
-                                })
-                            })
+                            .map(|(_, v)| v[i].map_or(0, |c| printed_width_f64(c.1)))
                             .max()
                             .unwrap_or(0),
                     ),
@@ -1361,65 +1416,65 @@ impl Percentiles {
                     std::cmp::max(
                         cmp.column_name().len(),
                         inner_column_widths.iter().cloned().sum::<usize>()
-                            + (inner_column_widths.len() - 1) * (separator.len() + 1),
+                            + (inner_column_widths.len() - 1) * 3,
                     ),
                     inner_column_widths,
                 )
             })
             .collect::<Vec<_>>();
 
-        // let column_widths = PercentileCompare::iterator()
-        //     .enumerate()
-        //     .map(|(i, cmp)| {
-        //         std::cmp::max(
-        //             "Value  Actual(%)".len(),
-        //             widths.iter().map(|v| v[i]).max().unwrap_or(0),
-        //         )
-        //     })
-        //     .collect::<Vec<_>>();
-
-        let separator = separator.bright_black();
-        print!("{:>start_width$}", "P%".bright_cyan().bold(),);
+        print!("{:>start_width$}   ", "P%".bright_cyan().bold(),);
         for (i, cmp) in PercentileCompare::iterator().enumerate() {
             let (width, _) = &column_widths[i];
-            print!(
-                " {} {:^width$} ",
-                separator,
-                cmp.column_name().bright_yellow().bold(),
-            );
+            print!("{:^width$}   ", cmp.column_name().bright_yellow().bold(),);
         }
         println!();
-        print!("{:>start_width$}", "");
+        // let separator = "+".bright_black();
+        print!("{:>start_width$}   ", "");
         for (i, _) in PercentileCompare::iterator().enumerate() {
             let (_, v) = &column_widths[i];
             for (width, name) in v.iter().zip(INNER_COLUMN_NAMES.iter()) {
-                print!(" {} {:^width$} ", separator, name.bright_yellow().bold(),);
+                print!("{:>width$}   ", name.bright_yellow().bold());
             }
         }
         println!();
 
-        let separator = " ".bright_black();
         for (percentile, v) in percentiles {
-            let label = if percentile == f64::MAX {
-                "Last".into()
+            if percentile == f64::MAX {
+                print!("{:>start_width$}   ", "Last".bright_cyan().bold(),);
+            } else if percentile.is_nan() {
+                print!("{:>start_width$}   ", "Ref".bright_magenta().bold(),);
             } else {
-                format!("{percentile}%")
+                print!(
+                    "{:>start_width$}   ",
+                    format!("{percentile}%").bright_cyan().bold(),
+                );
             };
-            print!("{:>start_width$} {}", label.bright_cyan().bold(), separator,);
             for (i, o) in v.into_iter().enumerate() {
                 let (full_width, inner_widths) = &column_widths[i];
-                if let Some(p) = o {
+                if let Some((col1, col2, _)) = o {
                     let first_inner_column_width = inner_widths[0];
                     let second_inner_column_width = inner_widths[1];
-                    print!(
-                        " {:>first_inner_column_width$} {} {:>second_inner_column_width$} {}  ",
-                        p.value(),
-                        separator,
-                        p.value(),
-                        separator
-                    );
+                    if percentile.is_nan() {
+                        print!(
+                            "{:>full_width$}   ",
+                            format!(
+                                "{:>first_inner_column_width$}   {:>second_inner_column_width$}",
+                                col1.bold().bright_magenta(),
+                                col2.bold().bright_magenta()
+                            ),
+                        );
+                    } else {
+                        print!(
+                            "{:>full_width$}   ",
+                            format!(
+                                "{:>first_inner_column_width$}   {:>second_inner_column_width$}",
+                                col1, col2
+                            ),
+                        );
+                    }
                 } else {
-                    print!(" {:>full_width$} {}", "", separator);
+                    print!("{:->full_width$}   ", "-".bright_black());
                 }
             }
             println!();

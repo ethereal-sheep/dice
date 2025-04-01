@@ -1362,7 +1362,7 @@ impl Percentiles {
                 .enumerate()
                 .for_each(|(i, cmp)| {
                     let inverse_count = p.inverse_count(cmp);
-                    let idx = percentiles
+                    let mut idx = percentiles
                         .binary_search_by(|(_, element)| {
                             if let Some((v, _, count)) = element[i] {
                                 return match count.cmp(&inverse_count) {
@@ -1383,6 +1383,19 @@ impl Percentiles {
                             Ordering::Greater
                         })
                         .unwrap_err();
+
+                    if idx < percentiles.len() && percentiles[idx].0.is_nan() {
+                        let (_, _, c) = percentiles[idx]
+                            .1
+                            .iter()
+                            .cloned()
+                            .find(|v| v.is_some())
+                            .flatten()
+                            .unwrap();
+                        if c < inverse_count {
+                            idx += 1;
+                        }
+                    }
 
                     let mut v: Vec<Option<(i64, f64, usize)>> = vec![None; 2];
                     v[i] = map_percentile(Some(p), cmp, Some(3));
@@ -1423,14 +1436,14 @@ impl Percentiles {
             })
             .collect::<Vec<_>>();
 
-        print!("{:>start_width$}   ", "P%".bright_cyan().bold(),);
+        print!("{:>start_width$}   ", "",);
         for (i, cmp) in PercentileCompare::iterator().enumerate() {
             let (width, _) = &column_widths[i];
             print!("{:^width$}   ", cmp.column_name().bright_yellow().bold(),);
         }
         println!();
         // let separator = "+".bright_black();
-        print!("{:>start_width$}   ", "");
+        print!("{:>start_width$}   ", "P%".bright_cyan().bold());
         for (i, _) in PercentileCompare::iterator().enumerate() {
             let (_, v) = &column_widths[i];
             for (width, name) in v.iter().zip(INNER_COLUMN_NAMES.iter()) {

@@ -615,14 +615,14 @@ impl GrammarRule {
                 let mut max_values = rhs.iter().map(|m| m.max).collect::<Vec<_>>();
 
                 min_values.sort();
-                max_values.sort_by(|a, b| b.cmp(a));
+                max_values.sort_by(|a: &i64, b| b.cmp(a));
                 min_values.resize(new_size, 0);
                 max_values.resize(new_size, 0);
 
                 Ok(MinMaxOutput::Array(
-                    max_values
+                    min_values
                         .iter()
-                        .zip(min_values.iter())
+                        .zip(max_values.iter())
                         .map(|m| MinMax {
                             min: *m.0,
                             max: *m.1,
@@ -1323,9 +1323,9 @@ mod tests {
             result,
             Err(GrammarError {
                 error_type: GrammarErrorType::UnknownToken(_),
-                error_index: 1,
-                error_length: 1,
-                input_string: _,
+                error_index: 0,
+                error_length: 2,
+                ..
             })
         );
         if let Err(GrammarError {

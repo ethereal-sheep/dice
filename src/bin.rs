@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use clap::{arg, command, value_parser, Command};
 use dice::{Dice, RollOptions, TestOptions};
 use owo_colors::OwoColorize;
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::SmallRng, SeedableRng};
 
 pub fn main() {
     let matches = command!()
@@ -69,6 +69,12 @@ pub fn main() {
                     )
                     .value_parser(value_parser!(i64)).allow_hyphen_values(true).allow_negative_numbers(true),
                 ),
+        ).subcommand(
+            Command::new("doc")
+                .about("Shows the dice script documentation")
+                .arg(arg!(
+                    --nologo "Suppresses logo"
+                ))
         )
         .get_matches();
 
@@ -101,30 +107,31 @@ pub fn main() {
                             dice.bright_magenta()
                         );
                         println!(
-                            "{:>start_width$} with {}",
-                            "Rolling".bold().bright_cyan(),
-                            "Std RNG".bold().bright_cyan()
+                            "{:>start_width$} {}..{}",
+                            "Range".bold().bright_cyan(),
+                            dice.min(),
+                            dice.max()
                         );
                     }
                     let seed = matches.get_one::<u64>("seed");
-                    let mut rng: StdRng = if let Some(seed) = seed {
-                        StdRng::seed_from_u64(*seed)
+                    let mut rng: SmallRng = if let Some(seed) = seed {
+                        SmallRng::seed_from_u64(*seed)
                     } else {
-                        StdRng::from_entropy()
+                        SmallRng::from_entropy()
                     };
                     if is_debug {
                         if let Some(seed) = seed {
                             println!(
                                 "{:>start_width$} with seeded {}; Seed {}",
                                 "Rolling".bold().bright_cyan(),
-                                "Std RNG".bold().bright_cyan(),
+                                "Small RNG".bold().bright_cyan(),
                                 seed.bold().bright_yellow(),
                             );
                         } else {
                             println!(
                                 "{:>start_width$} with {}",
                                 "Rolling".bold().bright_cyan(),
-                                "Std RNG".bold().bright_cyan()
+                                "Small RNG".bold().bright_cyan()
                             );
                         }
                     }
@@ -198,24 +205,24 @@ pub fn main() {
                         );
                     }
                     let seed = matches.get_one::<u64>("seed");
-                    let mut rng: StdRng = if let Some(seed) = seed {
-                        StdRng::seed_from_u64(*seed)
+                    let mut rng = if let Some(seed) = seed {
+                        SmallRng::seed_from_u64(*seed)
                     } else {
-                        StdRng::from_entropy()
+                        SmallRng::from_entropy()
                     };
                     if is_debug {
                         if let Some(seed) = seed {
                             println!(
                                 "{:>start_width$} with seeded {}; Seed {}",
                                 "Testing".bold().bright_cyan(),
-                                "Std RNG".bold().bright_cyan(),
+                                "Small RNG".bold().bright_cyan(),
                                 seed.bold().bright_yellow(),
                             );
                         } else {
                             println!(
                                 "{:>start_width$} with {}",
                                 "Testing".bold().bright_cyan(),
-                                "Std RNG".bold().bright_cyan()
+                                "Small RNG".bold().bright_cyan()
                             );
                         }
                     }
@@ -260,6 +267,108 @@ pub fn main() {
                 }
             }
         }
+    } else if let Some(matches) = matches.subcommand_matches("doc") {
+        if !matches.get_flag("nologo") {
+            println!("{:>start_width$}", Logo {});
+        } else {
+            println!("{:>start_width$}", SimpleLogo {});
+        }
+
+        println!(
+            "{:>start_width$}",
+            Doc::new(&[
+                ("DOCS", &[Content::paragraph("A documentation on the scripting language of dice.")]),
+                (
+                    "VARIABLES",
+                    &[
+                        Content::subheader("VAL", "An integer value."),
+                        Content::subheader(
+                            "ARR", 
+                            "An array of VALs. Can be declared by enclosing values in \nparenthesis, e.g. (1,2,3). ARR will eagerly transform into a VAL \nby way of summation if its operation requires it."
+                        ),
+                        Content::subheader(
+                            "NUM",
+                            "An integer value that *MUST* be provided by the user."
+                        ),
+                        Content::subheader("COUNT?", "A NUM that defaults to 1 if omitted."),
+                    ]
+                ),
+                (
+                    "OPERATORS",
+                    &[
+                        Content::subheader("Tokens", "+,-,*"),
+                        Content::subheader("Usage", "<VAL><+,-,*><VAL> => VAL"),
+                        Content::subheader(
+                            "Desc.",
+                            "Behaves as expected of math operators. Division is not available."
+                        ),
+                    ]
+                ),
+                (
+                    "DICE",
+                    &[
+                        Content::subheader("Keyword", "d/D"),
+                        Content::subheader("Usage", "<COUNT?>D<NUM> => ARR"),
+                        Content::subheader("Example", "3d4, 2D8, D20, .."),
+                        Content::subheader(
+                            "Desc.",
+                            "Rolls 1 or more dice and returns an array of the results."
+                        ),
+                    ]
+                ),
+                (
+                    "ADVANTAGE",
+                    &[
+                        Content::subheader("Keyword", "a/A"),
+                        Content::subheader("Usage", "<COUNT?>A<ARR> => ARR"),
+                        Content::paragraph("where COUNT <= size of input ARR"),
+                        Content::subheader("Example", "A2D20, 2A(1,2,3) => (3,2), .."),
+                        Content::subheader(
+                            "Desc.",
+                            "From an array of values, returns an array of the highest \nCOUNT values."
+                        ),
+                    ]
+                ),
+                (
+                    "DISADVAN.",
+                    &[
+                        Content::subheader("Keyword", "z/Z"),
+                        Content::subheader("Usage", "<COUNT?>Z<ARR> => ARR"),
+                        Content::paragraph("where COUNT <= size of input ARR"),
+                        Content::subheader("Example", "Z2D20, 2Z(1,2,3) => (1,2), .."),
+                        Content::subheader(
+                            "Desc.",
+                            "From an array of values, returns an array of the lowest \nCOUNT values."
+                        ),
+                    ]
+                ),
+                (
+                    "CHOOSE",
+                    &[
+                        Content::subheader("Keyword", "c/C"),
+                        Content::subheader("Usage", "<COUNT?>C<ARR> => ARR"),
+                        Content::subheader("Example", "2C(1,2,3)"),
+                        Content::subheader(
+                            "Desc.",
+                            "From an array of values, select, with replacement, COUNT \nvalues and returns a containing array."
+                        ),
+                    ]
+                ),
+                (
+                    "PICK",
+                    &[
+                        Content::subheader("Keyword", "p/P"),
+                        Content::subheader("Usage", "<COUNT?>P<ARR> => ARR"),
+                        Content::paragraph("where COUNT <= size of input ARR"),
+                        Content::subheader("Example", "2P(1,2,3)"),
+                        Content::subheader(
+                            "Desc.",
+                            "From an array of values, select, without replacement, COUNT \nvalues and returns a containing array."
+                        ),
+                    ]
+                ),
+            ])
+        );
     }
 }
 
@@ -316,6 +425,78 @@ impl fmt::Display for SimpleLogo {
             "Dice".bright_blue().bold(),
             env!("CARGO_PKG_VERSION").bold()
         )
+    }
+}
+
+struct Paragraph<'a> {
+    sentences: std::str::Split<'a, char>,
+}
+
+impl<'a> Paragraph<'a> {
+    fn new(string: &'a str) -> Paragraph<'a> {
+        Paragraph {
+            sentences: string.split('\n'),
+        }
+    }
+}
+
+enum Content<'a> {
+    SubHeader(&'a str, Paragraph<'a>),
+    Paragraph(Paragraph<'a>),
+}
+
+impl<'a> Content<'a> {
+    fn paragraph(string: &'a str) -> Content<'a> {
+        Content::Paragraph(Paragraph::new(string))
+    }
+    fn subheader(string: &'a str, paragraph: &'a str) -> Content<'a> {
+        Content::SubHeader(string, Paragraph::new(paragraph))
+    }
+}
+
+struct Doc<'a> {
+    contents: &'a [(&'a str, &'a [Content<'a>])],
+}
+
+impl<'a> Doc<'a> {
+    fn new(contents: &'a [(&'a str, &'a [Content<'a>])]) -> Doc<'a> {
+        Doc { contents }
+    }
+}
+
+impl<'a> fmt::Display for Doc<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let width = f.width().unwrap_or(0);
+        for (header, contents) in self.contents.iter() {
+            let styled_header = header.bold();
+            for (i, content) in contents.iter().enumerate() {
+                match &content {
+                    Content::SubHeader(sub, paragraph) => {
+                        if i == 0 {
+                            writeln!(f, "{:>width$}", styled_header)?;
+                        }
+                        for (j, sentence) in paragraph.sentences.clone().enumerate() {
+                            if j == 0 {
+                                writeln!(f, "{:>width$} {}", sub, sentence)?;
+                            } else {
+                                writeln!(f, "{:>width$} {}", "", sentence)?;
+                            }
+                        }
+                    }
+                    Content::Paragraph(paragraph) => {
+                        for (j, sentence) in paragraph.sentences.clone().enumerate() {
+                            if j == 0 && i == 0 {
+                                writeln!(f, "{:>width$} {}", styled_header, sentence)?;
+                            } else {
+                                writeln!(f, "{:>width$} {}", "", sentence)?;
+                            }
+                        }
+                    }
+                }
+            }
+            writeln!(f)?;
+        }
+        Ok(())
     }
 }
 
@@ -565,7 +746,11 @@ impl fmt::Display for XAxis<'_> {
 
 impl Buckets {
     fn from_range(min: i64, max: i64) -> Self {
-        let value_range = (max - min + 1) as usize;
+        let value_range = if min > max {
+            1
+        } else {
+            (max - min + 1) as usize
+        };
         let (bucket_count, bucket_size, _extra_range) =
             choose_bucket_count_size_and_extra_range(value_range);
         let buckets: Vec<usize> = vec![0; bucket_count];

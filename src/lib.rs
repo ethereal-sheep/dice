@@ -6,9 +6,9 @@ mod inner;
 use core::fmt;
 use std::str::FromStr;
 
-use inner::grammar::{GrammarTestOptions, TestDetails};
-
-use crate::inner::grammar::{ExecDetails, Grammar, GrammarError, GrammarExecOptions};
+use inner::grammar::{
+    ExecDetails, Grammar, GrammarError, GrammarExecOptions, GrammarTestOptions, TestDetails,
+};
 
 #[derive(Debug, Clone)]
 pub struct ParseDiceError {

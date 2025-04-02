@@ -3,7 +3,6 @@ use core::fmt;
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
 use std::{
-    io::Write,
     rc::Rc,
     time::{Duration, Instant},
 };

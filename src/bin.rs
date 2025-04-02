@@ -393,7 +393,7 @@ fn precision(x: f64, digits: u32) -> f64 {
         let shift = digits as i32 - x.abs().log10().ceil() as i32;
         let shift_factor = 10_f64.powi(shift);
 
-        (x * shift_factor).round() / shift_factor
+        (x * shift_factor).floor() / shift_factor
     }
 }
 
@@ -813,8 +813,6 @@ struct Percentiles {
     data_size: usize,
     first: i64,
     last: i64,
-    mean: f64,
-    median: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -843,13 +841,13 @@ impl Percentiles {
         }
 
         data.sort();
-        let median = if data.len() % 2 == 0 {
-            (data.get(data.len() / 2).unwrap() + data.get(data.len() / 2 - 1).unwrap()) as f64 / 2.0
-        } else {
-            *data.get(data.len() / 2).unwrap() as f64
-        };
+        // let median = if data.len() % 2 == 0 {
+        //     (data.get(data.len() / 2).unwrap() + data.get(data.len() / 2 - 1).unwrap()) as f64 / 2.0
+        // } else {
+        //     *data.get(data.len() / 2).unwrap() as f64
+        // };
 
-        let mean = data.iter().sum::<i64>() as f64 / data.len() as f64;
+        // let mean = data.iter().sum::<i64>() as f64 / data.len() as f64;
 
         let data_size = data.len();
 
@@ -876,18 +874,16 @@ impl Percentiles {
             data_size,
             first: *data.first().unwrap_or(&0),
             last: *data.last().unwrap_or(&0),
-            mean,
-            median,
         })
     }
 
-    fn mode(&self) -> i64 {
-        self.percentiles
-            .iter()
-            .max_by(|a, b| a.size.cmp(&b.size))
-            .unwrap()
-            .value
-    }
+    // fn mode(&self) -> i64 {
+    //     self.percentiles
+    //         .iter()
+    //         .max_by(|a, b| a.size.cmp(&b.size))
+    //         .unwrap()
+    //         .value
+    // }
 
     fn get_percentile_by_value(&self, value: i64) -> Percentile {
         self.percentiles
@@ -973,292 +969,6 @@ impl Percentiles {
             PercentileCompare::Less => self.percentiles.first().unwrap(),
         }
     }
-    fn print(&self, front_padding: usize, reference: Option<i64>) {
-        eprintln!(
-            "{:>front_padding$} percentile tables; data contains {} unique values",
-            "Drawing".bright_cyan().bold(),
-            self.percentiles.len().bright_yellow().bold(),
-        );
-        self.print_percentile_table(front_padding, PercentileCompare::Greater, reference);
-        self.print_percentile_table(front_padding, PercentileCompare::Less, reference);
-        if let Some(reference_value) = reference {
-            self.print_reference_stat_table(front_padding, reference_value);
-        }
-        self.print_stat_table(front_padding);
-    }
-
-    fn print_percentile_table(
-        &self,
-        front_padding: usize,
-        cmp: PercentileCompare,
-        reference: Option<i64>,
-    ) {
-        enum PercentileLabel {
-            Percent(f64, usize),
-            Text(&'static str),
-        }
-
-        impl PercentileLabel {
-            fn len(&self) -> usize {
-                match self {
-                    PercentileLabel::Percent(_, precision) => {
-                        if *precision == 0 {
-                            2
-                        } else {
-                            precision + 3
-                        }
-                    }
-                    PercentileLabel::Text(s) => s.len(),
-                }
-            }
-
-            fn precision(&self) -> usize {
-                match self {
-                    PercentileLabel::Percent(_, precision) => *precision,
-                    PercentileLabel::Text(_) => 0,
-                }
-            }
-        }
-
-        impl fmt::Display for PercentileLabel {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let width = f.width().unwrap_or(0);
-                match self {
-                    PercentileLabel::Percent(float, precision) => {
-                        write!(f, "{float:<width$.precision$}")
-                    }
-                    PercentileLabel::Text(s) => s.fmt(f),
-                }
-            }
-        }
-
-        let reference_title = "Ref";
-        let reference_percentile = reference.map(|v| self.get_percentile_by_value(v));
-
-        let percentiles = {
-            let mut percentiles: Vec<(PercentileLabel, &Percentile)> = vec![];
-            let mut value_column_width = 1;
-            for i in 0..=3 {
-                let percentage = i * 25;
-                if let Some(p) = self.get_percentile_by_percentage(percentage, cmp) {
-                    value_column_width = value_column_width.max(printed_width_i64(p.value));
-                    percentiles.push((PercentileLabel::Percent(percentage as f64, 0), p));
-                } else {
-                    break;
-                }
-            }
-
-            let mut iteration = 0;
-            let mut curr_highest = 99f64;
-            while let Some(p) = self.get_percentile_by_percentage(curr_highest, cmp) {
-                value_column_width = value_column_width.max(printed_width_i64(p.value));
-                percentiles.push((PercentileLabel::Percent(curr_highest, iteration), p));
-                curr_highest = 90.0 + curr_highest / 10.0;
-                iteration += 1;
-            }
-
-            percentiles.push((PercentileLabel::Text("Last"), self.last(cmp)));
-
-            if let Some(p) = &reference_percentile {
-                let idx = percentiles
-                    .binary_search_by(|(_, element)| {
-                        match element.inverse_count(cmp).cmp(&p.inverse_count(cmp)) {
-                            Ordering::Equal => match element.value.cmp(&p.value) {
-                                Ordering::Equal => Ordering::Less,
-                                ord => ord,
-                            },
-                            ord => ord,
-                        }
-                    })
-                    .unwrap_err();
-                percentiles.insert(idx, (PercentileLabel::Text(reference_title), p));
-            }
-
-            percentiles
-        };
-
-        let percentage_header = "%";
-        let range_header = "Range";
-        let inverse_header = if let PercentileCompare::Greater = cmp {
-            ">"
-        } else {
-            "<"
-        };
-        let inverse_percentage_header = if let PercentileCompare::Greater = cmp {
-            ">%"
-        } else {
-            "<%"
-        };
-
-        let max_precision = {
-            let mut max_precision = 0;
-            for (label, _) in percentiles.iter() {
-                max_precision = max_precision.max(label.precision());
-            }
-            max_precision + 1
-        };
-
-        let (
-            percentage_column_width,
-            range_column_width,
-            inverse_column_width,
-            inverse_percentage_column_width,
-        ) = {
-            let mut percentage_column_width = percentage_header.len();
-            let mut range_column_width = range_header.len();
-            let mut inverse_column_width = inverse_header.len();
-            for (label, percentile) in percentiles.iter() {
-                percentage_column_width = percentage_column_width.max(label.len());
-                range_column_width = range_column_width.max(printed_width_i64(percentile.value));
-                inverse_column_width = inverse_column_width
-                    .max(printed_width_i64(percentile.inverse_count(cmp) as u32));
-            }
-            (
-                percentage_column_width,
-                range_column_width,
-                inverse_column_width,
-                4 + max_precision,
-            )
-        };
-
-        println!(
-            "{:>front_padding$}─{:─<percentage_column_width$}─┬─{:─<range_column_width$}─┬─{:─<inverse_column_width$}─┬─{:─<inverse_percentage_column_width$}─┬",
-            "┎".bright_yellow(),
-            "", "", "", "",
-        );
-        println!(
-            "{:>front_padding$} {:^percentage_column_width$} │ {:^range_column_width$} │ {:^inverse_column_width$} │ {:^inverse_percentage_column_width$} │",
-            "┃".bright_yellow(),
-            percentage_header,
-            range_header,
-            inverse_header,
-            inverse_percentage_header,
-        );
-        println!(
-            "{:>front_padding$}─{:─<percentage_column_width$}─┼─{:─<range_column_width$}─┼─{:─<inverse_column_width$}─┼─{:─<inverse_percentage_column_width$}─┼",
-            "┠".bright_yellow(),
-            "", "", "", "",
-        );
-        for (label, percentile) in percentiles.iter() {
-            if let PercentileLabel::Text("Ref") = label {
-                println!(
-                    "{:>front_padding$} {:<percentage_column_width$} │ {:>range_column_width$} │ {:>inverse_column_width$} │ {:>inverse_percentage_column_width$.max_precision$} │",
-                    "┃".bright_yellow(),
-                    label.bright_magenta().bold(),
-                    percentile.value.bright_magenta().bold(),
-                    percentile.inverse_count(cmp).bright_magenta().bold(),
-                    percentile.inverse_percentage(cmp).bright_magenta().bold(),
-                );
-            } else {
-                println!(
-                    "{:>front_padding$} {:<percentage_column_width$} │ {:>range_column_width$} │ {:>inverse_column_width$} │ {:>inverse_percentage_column_width$.max_precision$} │",
-                    "┃".bright_yellow(),
-                    label,
-                    percentile.value,
-                    percentile.inverse_count(cmp),
-                    percentile.inverse_percentage(cmp),
-                );
-            }
-        }
-        println!(
-            "{:>front_padding$}─{:─<percentage_column_width$}─┴─{:─<range_column_width$}─┴─{:─<inverse_column_width$}─┴─{:─<inverse_percentage_column_width$}─┴",
-            "┖".bright_yellow(),
-            "", "", "", "",
-        );
-    }
-
-    fn print_reference_stat_table(&self, front_padding: usize, reference_value: i64) {
-        let row_header_column_width = 10;
-        let less_than_column_width = 11;
-        let reference_column_width = 11;
-        let greater_than_column_width = 11;
-
-        let percentile = self.get_percentile_by_value(reference_value);
-
-        println!(
-            "{:>front_padding$}─{:─<row_header_column_width$}─┬─{:─<less_than_column_width$}─┬─{:─<reference_column_width$}─┬─{:─<greater_than_column_width$}─┬",
-            "┎".bright_yellow(),
-            "", "", "", "",
-        );
-        println!(
-            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
-            "┃".bright_yellow(),
-            "",
-            "x<",
-            "Ref".bold().magenta(),
-            "<x",
-        );
-        println!(
-            "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
-            "┠".bright_yellow(),
-            "", "", "", "",
-        );
-        println!(
-            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$.2} │ {:^reference_column_width$.2} │ {:^greater_than_column_width$.2} │",
-            "┃".bright_yellow(),
-            "P%",
-            percentile.greater_than_percentage(),
-            percentile.percentage(),
-            percentile.less_than_percentage(),
-        );
-        println!(
-            "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
-            "┠".bright_yellow(),
-            "", "", "", "",
-        );
-        println!(
-            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
-            "┃".bright_yellow(),
-            "size",
-            percentile.greater_than_count(),
-            percentile.size(),
-            percentile.less_than_count(),
-        );
-        println!(
-            "{:>front_padding$}─{:─<row_header_column_width$}─┴─{:─<less_than_column_width$}─┴─{:─<reference_column_width$}─┴─{:─<greater_than_column_width$}─┴",
-            "┖".bright_yellow(),
-            "", "", "", "",
-        );
-    }
-
-    fn print_stat_table(&self, front_padding: usize) {
-        let row_header_column_width = 10;
-        let less_than_column_width = 11;
-        let reference_column_width = 11;
-        let greater_than_column_width = 11;
-
-        println!(
-            "{:>front_padding$}─{:─<row_header_column_width$}─┬─{:─<less_than_column_width$}─┬─{:─<reference_column_width$}─┬─{:─<greater_than_column_width$}─┬",
-            "┎".bright_yellow(),
-            "", "", "", "",
-        );
-        println!(
-            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$} │ {:^reference_column_width$} │ {:^greater_than_column_width$} │",
-            "┃".bright_yellow(),
-            "",
-            "Mean",
-            "Median",
-            "Mode",
-        );
-        println!(
-            "{:>front_padding$}─{:─<row_header_column_width$}─┼─{:─<less_than_column_width$}─┼─{:─<reference_column_width$}─┼─{:─<greater_than_column_width$}─┼",
-            "┠".bright_yellow(),
-            "", "", "", "",
-        );
-        println!(
-            "{:>front_padding$} {:^row_header_column_width$} │ {:^less_than_column_width$.2} │ {:^reference_column_width$.1} │ {:^greater_than_column_width$} │",
-            "┃".bright_yellow(),
-            "Value",
-            self.mean,
-            self.median,
-            self.mode(),
-        );
-        println!(
-            "{:>front_padding$}─{:─<row_header_column_width$}─┴─{:─<less_than_column_width$}─┴─{:─<reference_column_width$}─┴─{:─<greater_than_column_width$}─┴",
-            "┖".bright_yellow(),
-            "", "", "", "",
-        );
-    }
 
     fn print_table(&self, start_width: usize, reference: Option<i64>, _is_debug: bool) {
         eprintln!(
@@ -1299,7 +1009,8 @@ impl Percentiles {
                 })
             };
 
-        const FIXED_PERCENTILES: &[f64] = &[0.0, 25.0, 50.0, 75.0];
+        const FIXED_PERCENTILES: &[f64] =
+            &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0];
         let mut percentiles = FIXED_PERCENTILES
             .iter()
             .map(|p| {

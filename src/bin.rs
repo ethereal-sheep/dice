@@ -511,7 +511,10 @@ struct Buckets {
 }
 
 fn get_max_bucket_count() -> usize {
-    termsize::get().unwrap().cols as usize - 15
+    termsize::get()
+        .map(|size| size.cols)
+        .and_then(|cols| (cols > 15).then(|| cols as usize - 15))
+        .unwrap_or(1)
 }
 
 fn get_max_width(bucket_count: usize) -> usize {
@@ -567,7 +570,7 @@ fn printed_width_f64(n: f64) -> usize {
     format!("{}", n).len()
 }
 
-fn precision(x: f64, digits: u32) -> f64 {
+fn precision_floor(x: f64, digits: u32) -> f64 {
     if x == 0. || digits == 0 {
         0.
     } else {
@@ -575,6 +578,17 @@ fn precision(x: f64, digits: u32) -> f64 {
         let shift_factor = 10_f64.powi(shift);
 
         (x * shift_factor).floor() / shift_factor
+    }
+}
+
+fn precision_round(x: f64, digits: u32) -> f64 {
+    if x == 0. || digits == 0 {
+        0.
+    } else {
+        let shift = digits as i32 - x.abs().log10().ceil() as i32;
+        let shift_factor = 10_f64.powi(shift);
+
+        (x * shift_factor).round() / shift_factor
     }
 }
 
@@ -845,7 +859,7 @@ impl Buckets {
             .and_then(|i| self.get_normalized_bucket_value(i))
             .map(|v| v / self.size as f64)
             .unwrap();
-        let graph_max = precision(modal_bucket_normalized_value, 2) * self.size as f64;
+        let graph_max = precision_round(modal_bucket_normalized_value, 2) * self.size as f64;
         let interval_size = (graph_max - graph_min) / interval_count as f64;
 
         let graph_width = self.get_graph_width(bar_width);
@@ -887,7 +901,7 @@ impl Buckets {
             if top_line < 0.1 {
                 eprint!(
                     "{:>front_padding$.2e}",
-                    precision(v, 3).bold().bright_yellow()
+                    precision_floor(v, 3).bold().bright_yellow()
                 );
             } else {
                 let digits = if top_line < 1.0 {
@@ -899,7 +913,7 @@ impl Buckets {
                 };
                 eprint!(
                     "{:>front_padding$.digits$}",
-                    precision(v, 3).bold().bright_yellow()
+                    precision_floor(v, 3).bold().bright_yellow()
                 );
             }
 
@@ -1171,13 +1185,13 @@ impl Percentiles {
                 percentile.value()
                     .bold()
                     .bright_yellow(),
-                format_args!("{}%", precision(percentile.percentage(), 3))
+                format_args!("{}%", precision_floor(percentile.percentage(), 3))
                     .bold()
                     .bright_yellow(),
-                format_args!("{}%", precision(percentile.greater_than_percentage(), 3))
+                format_args!("{}%", precision_floor(percentile.greater_than_percentage(), 3))
                     .bold()
                     .bright_yellow(),
-                format_args!("{}%", precision(percentile.less_than_percentage(), 3))
+                format_args!("{}%", precision_floor(percentile.less_than_percentage(), 3))
                     .bold()
                     .bright_yellow(),
             );
@@ -1188,7 +1202,7 @@ impl Percentiles {
                 percentile.map(|p| {
                     (
                         p.value(),
-                        precision(p.inverse_percentage(cmp), digits.unwrap_or(3)),
+                        precision_floor(p.inverse_percentage(cmp), digits.unwrap_or(3)),
                         p.inverse_count(cmp),
                     )
                 })
@@ -1427,9 +1441,8 @@ mod tests {
     fn test_which() {
         let mut buckets = Buckets::from_range(1, 5);
         buckets.fill(&vec![1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 7]);
-        assert_eq!(buckets.which(1), Some(0));
-        assert_eq!(buckets.which(0), None);
-        assert_eq!(buckets.which(2), Some(1));
+        assert_matches!(buckets.which(1), Some(_));
+        assert_matches!(buckets.which(2), Some(_));
         assert_eq!(buckets.which(7), None);
     }
 

@@ -1,12 +1,12 @@
 use crate::inner::token::{Token, Tokenizer};
-use crate::{ExecDetails, ExecLineDetail, ExecOutput, ExecResult, ExecResultWithDetails};
+use crate::{
+    ExecDetails, ExecLineDetail, ExecOutput, ExecResult, ExecResultWithDetails, OperationTestInfo,
+    OverallTestInfo, RollOptions, TestDetails, TestLineDetail, TestOptions, TestResultWithDetails,
+};
 use core::fmt;
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
-use std::{
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{rc::Rc, time::Instant};
 
 type ExecResultWithLineDetail = Result<(ExecOutput, Option<ExecLineDetail>), String>;
 
@@ -110,20 +110,6 @@ impl ExecDetails {
     }
 }
 
-#[derive(Debug, Clone)]
-struct TestLineDetail {
-    name: &'static str,
-    operation: String,
-    time_taken: Duration,
-}
-
-#[derive(Debug, Clone)]
-pub struct TestDetails {
-    pub output: Vec<i64>,
-    time_taken: Duration,
-    details: Vec<TestLineDetail>,
-}
-
 impl fmt::Display for TestLineDetail {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let front_width = f.width().unwrap_or(8);
@@ -175,12 +161,12 @@ impl fmt::Display for TestDetails {
 }
 
 #[derive(Debug, Clone)]
-pub struct MinMax {
+pub(crate) struct MinMax {
     min: i64,
     max: i64,
 }
 
-pub enum MinMaxOutput {
+pub(crate) enum MinMaxOutput {
     Value(MinMax),
     Array(Vec<MinMax>),
 }
@@ -188,7 +174,7 @@ pub enum MinMaxOutput {
 type MinMaxResult = Result<MinMaxOutput, String>;
 
 impl MinMaxOutput {
-    pub fn value(&self) -> MinMax {
+    pub(crate) fn value(&self) -> MinMax {
         match self {
             MinMaxOutput::Value(m) => m.clone(),
             MinMaxOutput::Array(vec) => {
@@ -200,7 +186,7 @@ impl MinMaxOutput {
         }
     }
 
-    pub fn array(&self) -> Result<Vec<MinMax>, String> {
+    pub(crate) fn array(&self) -> Result<Vec<MinMax>, String> {
         match self {
             MinMaxOutput::Value(m) => {
                 Err(format!("Expected array, but got Value({:?}) instead", m))
@@ -319,24 +305,8 @@ impl fmt::Display for GrammarRule {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct GrammarExecOptions {
-    pub is_debug: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct GrammarTestOptions {
-    pub is_debug: bool,
-    pub test_size: usize,
-}
-
-type ExecStackFn = Rc<
-    dyn Fn(
-        &Vec<ExecOutput>,
-        &mut dyn rand::RngCore,
-        &GrammarExecOptions,
-    ) -> ExecResultWithLineDetail,
->;
+type ExecStackFn =
+    Rc<dyn Fn(&Vec<ExecOutput>, &mut dyn rand::RngCore, &RollOptions) -> ExecResultWithLineDetail>;
 
 #[derive(Clone)]
 struct StackFn {
@@ -770,7 +740,8 @@ impl GrammarRule {
                 name,
                 operation: (to_string)(),
                 exec: Rc::new(move |_: &Vec<ExecOutput>, rng, options| {
-                    Ok(exec(rng)?.with_line_detail(name, options.is_debug.then(&to_string)))
+                    Ok(exec(rng)?
+                        .with_line_detail(name, options.include_line_details.then(&to_string)))
                 }),
             },
             GrammarRule::UnaryNumber {
@@ -787,8 +758,10 @@ impl GrammarRule {
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
                         let rhs = stack.get(index).unwrap().value();
-                        Ok(exec(rhs, rng)?
-                            .with_line_detail(name, options.is_debug.then(|| to_string(rhs))))
+                        Ok(exec(rhs, rng)?.with_line_detail(
+                            name,
+                            options.include_line_details.then(|| to_string(rhs)),
+                        ))
                     }),
                 }
             }
@@ -806,8 +779,10 @@ impl GrammarRule {
                     operation,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
                         let v = &stack.get(index).unwrap().array()?;
-                        Ok(exec(v, rng)?
-                            .with_line_detail(name, options.is_debug.then(|| to_string(v))))
+                        Ok(exec(v, rng)?.with_line_detail(
+                            name,
+                            options.include_line_details.then(|| to_string(v)),
+                        ))
                     }),
                 }
             }
@@ -828,8 +803,10 @@ impl GrammarRule {
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
                         let lhs = stack.get(lhs_index).unwrap().value();
                         let rhs = stack.get(rhs_index).unwrap().value();
-                        Ok(exec(lhs, rhs, rng)?
-                            .with_line_detail(name, options.is_debug.then(|| to_string(lhs, rhs))))
+                        Ok(exec(lhs, rhs, rng)?.with_line_detail(
+                            name,
+                            options.include_line_details.then(|| to_string(lhs, rhs)),
+                        ))
                     }),
                 }
             }
@@ -1120,35 +1097,6 @@ fn primary(tokenizer: &mut Tokenizer, expected: &'static str) -> Result<GrammarR
     }
 }
 
-const HORIZONTAL_BAR_SECTIONS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
-
-fn choose_char_for_progress_at_interval(
-    interval_start: f64,
-    interval_size: f64,
-    progress_value: f64,
-) -> char {
-    let normalized_position = ((progress_value - interval_start) / interval_size).clamp(0.0, 1.0);
-    let index = (normalized_position * 8.0).floor() as usize;
-    HORIZONTAL_BAR_SECTIONS[index]
-}
-
-fn progress_string(progress_size: f64, interval_count: usize, progress_value: f64) -> String {
-    let normalized_interval_count = interval_count.max(1);
-    let interval_size = progress_size / normalized_interval_count as f64;
-    let which_interval =
-        ((progress_value / interval_size).floor() as usize).clamp(0, interval_count);
-    let bottom_interval_count = which_interval;
-    let top_interval_count = interval_count - which_interval - 1;
-    let interval_start = interval_size * bottom_interval_count as f64;
-    let character =
-        choose_char_for_progress_at_interval(interval_start, interval_size, progress_value);
-
-    format!(
-        "{:█<bottom_interval_count$}{}{:<top_interval_count$}",
-        "", character, ""
-    )
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct Grammar {
     // root: GrammarRule,
@@ -1193,7 +1141,7 @@ impl Grammar {
     pub(crate) fn exec(
         &self,
         rng: &mut impl rand::Rng,
-        options: GrammarExecOptions,
+        options: RollOptions,
     ) -> ExecResultWithDetails {
         let mut stack: Vec<ExecOutput> = vec![];
         let mut details: Vec<ExecLineDetail> = vec![];
@@ -1210,74 +1158,48 @@ impl Grammar {
     pub(crate) fn test(
         &self,
         rng: &mut impl rand::Rng,
-        options: GrammarTestOptions,
-    ) -> Result<TestDetails, String> {
-        let n = options.test_size;
-        let is_debug = options.is_debug;
+        options: TestOptions,
+    ) -> TestResultWithDetails {
         let start_time = Instant::now();
-        let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; n];
+        let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; options.test_size];
         let mut details: Vec<TestLineDetail> = vec![];
-        let exec_options = GrammarExecOptions { is_debug: false };
+        let exec_options = RollOptions {
+            include_line_details: false,
+        };
 
-        let front_width = 12;
-        let middle_width = 15;
-
-        if options.is_debug {
-            eprintln!(
-                "{:>front_width$} {:<middle_width$} => {}",
-                "Running".bold().bright_cyan(),
-                "test of size",
-                options.test_size.bold().bright_yellow()
-            );
-        }
+        let mut info = OverallTestInfo {
+            operation_test_info: OperationTestInfo {
+                code: "",
+                name: "",
+                operation_index: 0,
+                iteration_index: 0,
+                test_size: options.test_size,
+                start_time: Instant::now(),
+            },
+            operations_count: self.callstack.len(),
+            start_time: Instant::now(),
+        };
 
         for (j, stack_fn) in self.callstack.iter().enumerate() {
-            let debug_message = if is_debug {
-                let message = format!(
-                    "{:>front_width$} {:<middle_width$} =>",
-                    stack_fn.name.bright_yellow().bold(),
-                    stack_fn.operation.bright_magenta()
-                );
-                eprint!("{message}");
-                Some(message)
-            } else {
-                None
+            info.operation_test_info = OperationTestInfo {
+                code: stack_fn.name,
+                name: &stack_fn.operation,
+                operation_index: j,
+                iteration_index: 0,
+                test_size: options.test_size,
+                start_time: Instant::now(),
             };
 
             let stack_fn_start = Instant::now();
-            let interval = if n < 100 { 1 } else { n / 100 };
             for (i, stack) in stacks.iter_mut().enumerate() {
-                if i % interval == 0 {
-                    if let Some(message) = &debug_message {
-                        let percent = (i / interval) + 1;
-                        eprint!(
-                            "\x1b[2K\r{message} {}▏{percent}%",
-                            progress_string(n as f64, 20, i as f64),
-                        );
-                    } else {
-                        let interval = if (self.callstack.len() * n) < 100 {
-                            1
-                        } else {
-                            (self.callstack.len() * n) / 100
-                        };
-                        let percent = ((j * n + i) / interval) + 1;
-                        eprint!(
-                            "\x1b[2K\r{:>front_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s",
-                            "Testing".bold().bright_cyan(),
-                            stack_fn.operation.bright_magenta(),
-                            progress_string((self.callstack.len() * n) as f64, 20, (j * n + i) as f64),
-                            start_time.elapsed().as_secs_f32().bold()
-                        );
-                    }
+                info.operation_test_info.iteration_index = i;
+                if let Some(callback) = &options.interval_callback {
+                    (callback)(&info);
                 }
                 let (output, _) = (stack_fn.exec)(stack, rng, &exec_options)?;
                 stack.push(output);
             }
-            if let Some(message) = &debug_message {
-                eprintln!(
-                    "\x1b[2K\r{message} {:<5}ms",
-                    stack_fn_start.elapsed().as_millis()
-                );
+            if options.is_debug {
                 details.push(TestLineDetail {
                     name: stack_fn.name,
                     operation: stack_fn.operation.clone(),
@@ -1286,16 +1208,6 @@ impl Grammar {
             }
         }
 
-        if !is_debug {
-            eprint!("\x1b[2K\r");
-        }
-
-        eprintln!(
-            "{:>front_width$} {:.<middle_width$} => {:<6.2}s",
-            "Finished".bold().bright_green(),
-            "",
-            start_time.elapsed().as_secs_f32().bold()
-        );
         Ok(TestDetails {
             output: stacks.into_iter().map(|s| s[s.len() - 1].value()).collect(),
             time_taken: start_time.elapsed(),

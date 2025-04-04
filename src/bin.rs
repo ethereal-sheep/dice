@@ -1,6 +1,6 @@
 #![feature(assert_matches)]
 use core::fmt;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, rc::Rc};
 
 use clap::{arg, command, value_parser, Command};
 use dice::{Dice, ExecOutput, RollOptions, TestOptions};
@@ -136,7 +136,12 @@ pub fn main() {
                             );
                         }
                     }
-                    let result = dice.roll(&mut rng, RollOptions { is_debug });
+                    let result = dice.roll(
+                        &mut rng,
+                        RollOptions {
+                            include_line_details: is_debug,
+                        },
+                    );
                     match result {
                         Ok(result) => {
                             if is_debug {
@@ -161,10 +166,8 @@ pub fn main() {
                                         ""
                                     );
                                     if let ExecOutput::Array(v) = &result.output {
-                                        if !is_raw {
-                                            if v.len() > 1 {
-                                                print!("+(...) => ");
-                                            }
+                                        if !is_raw && v.len() > 1 {
+                                            print!("+(...) => ");
                                         }
                                     }
                                 } else {
@@ -217,7 +220,7 @@ pub fn main() {
             let result = script.parse::<Dice>();
             match result {
                 Ok(dice) => {
-                    let test_size: u64 = if let Some(n) = matches.get_one("size") {
+                    let test_size: usize = if let Some(n) = matches.get_one("size") {
                         *n
                     } else {
                         if is_debug {
@@ -230,10 +233,6 @@ pub fn main() {
                         100000
                     };
 
-                    let options = TestOptions {
-                        is_debug: matches.get_flag("debug"),
-                        test_size: test_size as usize,
-                    };
                     if is_debug {
                         println!(
                             "{:>start_width$} {}",
@@ -263,6 +262,95 @@ pub fn main() {
                             );
                         }
                     }
+
+                    let middle_width = 15;
+
+                    if is_debug {
+                        eprintln!(
+                            "{:>start_width$} {:<middle_width$} => {}",
+                            "Running".bold().bright_cyan(),
+                            "test of size",
+                            test_size.bold().bright_yellow()
+                        );
+                    }
+
+                    let options = TestOptions {
+                        is_debug,
+                        test_size: test_size as usize,
+                        interval_callback: Some(Rc::new(move |info| {
+                            let interval = if info.test_size() < 100 {
+                                1
+                            } else {
+                                info.test_size() / 100
+                            };
+
+                            let debug_message = if is_debug {
+                                let message = format!(
+                                    "{:>start_width$} {:<middle_width$} =>",
+                                    info.current_test_info()
+                                        .operation_code()
+                                        .bright_yellow()
+                                        .bold(),
+                                    info.current_test_info().operation_name().bright_magenta()
+                                );
+                                Some(message)
+                            } else {
+                                None
+                            };
+
+                            if info.current_test_info().iteration_index() % interval == 0 {
+                                let interval = if test_size < 100 { 1 } else { test_size / 100 };
+                                if let Some(message) = &debug_message {
+                                    let percent =
+                                        (info.current_test_info().iteration_index() / interval) + 1;
+                                    eprint!(
+                                        "\x1b[2K\r{message} {}▏{percent}%",
+                                        progress_string(
+                                            info.test_size() as f64,
+                                            20,
+                                            info.current_test_info().iteration_index() as f64
+                                        ),
+                                    );
+                                } else {
+                                    let interval = if info.total_test_count() < 100 {
+                                        1
+                                    } else {
+                                        info.total_test_count() / 100
+                                    };
+                                    let percent = info.total_test_index() / interval + 1;
+                                    eprint!(
+                                    "\x1b[2K\r{:>start_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s",
+                                    "Testing".bold().bright_cyan(),
+                                    info.current_test_info().operation_name().bright_magenta(),
+                                    progress_string(info.total_test_count() as f64, 20, info.total_test_index() as f64),
+                                    info.start_time().elapsed().as_secs_f32().bold()
+                                );
+                                }
+                            }
+
+                            if info.current_test_info().is_last() {
+                                if let Some(message) = &debug_message {
+                                    eprintln!(
+                                        "\x1b[2K\r{message} {:<5}ms",
+                                        info.current_test_info().start_time().elapsed().as_millis()
+                                    );
+                                }
+                            }
+                            if info.is_last() {
+                                if !is_debug {
+                                    eprint!("\x1b[2K\r");
+                                }
+
+                                eprintln!(
+                                    "{:>start_width$} {:.<middle_width$} => {:<6.2}s",
+                                    "Finished".bold().bright_green(),
+                                    "",
+                                    info.start_time().elapsed().as_secs_f32().bold()
+                                );
+                            }
+                        })),
+                    };
+
                     let result = dice.test(&mut rng, options);
                     match result {
                         Ok(result) => {
@@ -420,6 +508,35 @@ pub fn main() {
             ])
         );
     }
+}
+
+const HORIZONTAL_BAR_SECTIONS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+
+fn choose_char_for_progress_at_interval(
+    interval_start: f64,
+    interval_size: f64,
+    progress_value: f64,
+) -> char {
+    let normalized_position = ((progress_value - interval_start) / interval_size).clamp(0.0, 1.0);
+    let index = (normalized_position * 8.0).floor() as usize;
+    HORIZONTAL_BAR_SECTIONS[index]
+}
+
+fn progress_string(progress_size: f64, interval_count: usize, progress_value: f64) -> String {
+    let normalized_interval_count = interval_count.max(1);
+    let interval_size = progress_size / normalized_interval_count as f64;
+    let which_interval =
+        ((progress_value / interval_size).floor() as usize).clamp(0, interval_count);
+    let bottom_interval_count = which_interval;
+    let top_interval_count = interval_count - which_interval - 1;
+    let interval_start = interval_size * bottom_interval_count as f64;
+    let character =
+        choose_char_for_progress_at_interval(interval_start, interval_size, progress_value);
+
+    format!(
+        "{:█<bottom_interval_count$}{}{:<top_interval_count$}",
+        "", character, ""
+    )
 }
 
 struct Logo;

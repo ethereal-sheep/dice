@@ -391,7 +391,7 @@ impl GrammarRule {
                     lhs.min * rhs.min,
                     lhs.min * rhs.max,
                     lhs.max * rhs.min,
-                    lhs.max * lhs.max,
+                    lhs.max * rhs.max,
                 ];
 
                 Ok(MinMaxOutput::Value(MinMax {

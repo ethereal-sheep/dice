@@ -10,6 +10,7 @@ pub enum Token {
     Advantage(u64),
     Disadvantage(u64),
     Dice(u64, u64),
+    Range(i64, i64),
     Pick(u64),
     Choose(u64),
     LeftParenthesis,
@@ -20,26 +21,55 @@ pub enum Token {
 
 type MatchTokenFn = fn(&mut Countable<Chars>) -> Option<Token>;
 
+fn consume_unsigned(chars: &mut Countable<Chars>) -> Option<u64> {
+    if let Some('1'..='9') = chars.peek() {
+        let mut value = 0u64;
+        while let Some('0'..='9') = chars.peek() {
+            let x = chars.next().and_then(|c| c.to_digit(10)).unwrap() as u64;
+            value = value * 10 + x;
+        }
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn consume_signed(chars: &mut Countable<Chars>) -> Option<i64> {
+    match chars.peek() {
+        Some('-') => {
+            chars.next();
+            consume_unsigned(chars).map(|u| -(u as i64))
+        }
+        Some('1'..='9') => consume_unsigned(chars).map(|u| u as i64),
+        Some('0') => {
+            chars.next();
+            Some(0)
+        }
+        _ => None,
+    }
+}
+
 static TOKENIZERS: &[MatchTokenFn] = &[
     |chars| {
         // number
+        let lhs = consume_signed(chars)?;
+
+        let rhs = chars
+            .next()
+            .and_then(|c| if c == '.' { chars.next() } else { None })
+            .and_then(|c| if c == '.' { chars.peek() } else { None })
+            .and_then(|_| consume_signed(chars))?;
+        Some(Token::Range(lhs, rhs))
+    },
+    |chars| {
+        // number
         if let Some('1'..='9') = chars.peek() {
-            let mut value = 0u64;
-            while let Some('0'..='9') = chars.peek() {
-                let x = chars.next().and_then(|c| c.to_digit(10)).unwrap() as u64;
-                value = value * 10 + x;
-            }
+            let value = consume_unsigned(chars)?;
             match chars.peek() {
                 Some('d' | 'D') => {
                     chars.next();
-                    if let Some('1'..='9') = chars.peek() {
-                        let mut rhs = 0u64;
-                        while let Some('0'..='9') = chars.peek() {
-                            let x = chars.next().and_then(|c| c.to_digit(10)).unwrap() as u64;
-                            rhs = rhs * 10 + x;
-                        }
-                        return Some(Token::Dice(value, rhs));
-                    }
+                    let rhs = consume_unsigned(chars)?;
+                    return Some(Token::Dice(value, rhs));
                 }
                 Some('a' | 'A') => {
                     chars.next();
@@ -242,7 +272,7 @@ impl Iterator for Tokenizer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    static BASE_DICE_STRING: &str = "123 + 2p(123,z4d2, d8, 4d4d4)";
+    static BASE_DICE_STRING: &str = "123 + 2p(123,z4d2, d8, 4d4d4)1..=2";
 
     #[test]
     fn test_tokenizer_next() {
@@ -262,6 +292,55 @@ mod tests {
         assert_eq!(tokenizer.next(), Some(Token::Dice(4, 4)));
         assert_eq!(tokenizer.next(), Some(Token::Dice(1, 4)));
         assert_eq!(tokenizer.next(), Some(Token::RightParenthesis));
+        assert_eq!(tokenizer.next(), Some(Token::Range(1, 2)));
+        assert_eq!(tokenizer.next(), None);
+    }
+
+    #[test]
+    fn test_tokenizer_pos_range() {
+        let mut tokenizer = Tokenizer::new("0..=2");
+        assert_eq!(tokenizer.next(), Some(Token::Range(0, 2)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("0..2");
+        assert_eq!(tokenizer.next(), Some(Token::Range(0, 1)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("-2..2");
+        assert_eq!(tokenizer.next(), Some(Token::Range(-2, 1)));
+        assert_eq!(tokenizer.next(), None);
+    }
+
+    #[test]
+    fn test_tokenizer_neg_range() {
+        let mut tokenizer = Tokenizer::new("0..=-2");
+        assert_eq!(tokenizer.next(), Some(Token::Range(0, -2)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("0..-2");
+        assert_eq!(tokenizer.next(), Some(Token::Range(0, -1)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("2..-2");
+        assert_eq!(tokenizer.next(), Some(Token::Range(2, -1)));
+        assert_eq!(tokenizer.next(), None);
+    }
+
+    #[test]
+    fn test_tokenizer_zero_range() {
+        let mut tokenizer = Tokenizer::new("0..=0");
+        assert_eq!(tokenizer.next(), Some(Token::Range(0, 0)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("0..0");
+        assert_eq!(tokenizer.next(), Some(Token::Range(0, 0)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("1..=1");
+        assert_eq!(tokenizer.next(), Some(Token::Range(1, 1)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("1..1");
+        assert_eq!(tokenizer.next(), Some(Token::Range(1, 1)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("-1..=-1");
+        assert_eq!(tokenizer.next(), Some(Token::Range(-1, -1)));
+        assert_eq!(tokenizer.next(), None);
+        let mut tokenizer = Tokenizer::new("-1..-1");
+        assert_eq!(tokenizer.next(), Some(Token::Range(-1, -1)));
         assert_eq!(tokenizer.next(), None);
     }
 
@@ -281,6 +360,7 @@ mod tests {
     fn test_tokenizer_peek() {
         let mut tokenizer = Tokenizer::new(BASE_DICE_STRING);
 
+        assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), tokenizer.next());

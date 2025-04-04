@@ -6,9 +6,32 @@ mod inner;
 use core::fmt;
 use std::str::FromStr;
 
-use inner::grammar::{
-    ExecDetails, Grammar, GrammarError, GrammarExecOptions, GrammarTestOptions, TestDetails,
-};
+use inner::grammar::{GrammarTestOptions, TestDetails};
+
+use crate::inner::grammar::{Grammar, GrammarError, GrammarExecOptions};
+
+#[derive(Debug, Clone)]
+pub enum ExecOutput {
+    Value(i64),
+    Array(Vec<i64>),
+}
+
+type ExecResult = Result<ExecOutput, String>;
+
+#[derive(Debug, Clone)]
+pub struct ExecLineDetail {
+    pub name: &'static str,
+    pub operation: String,
+    pub output: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecDetails {
+    pub output: ExecOutput,
+    pub details: Vec<ExecLineDetail>,
+}
+
+type ExecResultWithDetails = Result<ExecDetails, String>;
 
 #[derive(Debug, Clone)]
 pub struct ParseDiceError {
@@ -81,11 +104,7 @@ impl Dice {
         self.grammar.max()
     }
 
-    pub fn roll(
-        &self,
-        rng: &mut impl rand::Rng,
-        options: RollOptions,
-    ) -> Result<ExecDetails, String> {
+    pub fn roll(&self, rng: &mut impl rand::Rng, options: RollOptions) -> ExecResultWithDetails {
         self.grammar.exec(rng, options.into())
     }
 

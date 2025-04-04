@@ -1,4 +1,5 @@
 use crate::inner::token::{Token, Tokenizer};
+use crate::{ExecDetails, ExecLineDetail, ExecOutput, ExecResult, ExecResultWithDetails};
 use core::fmt;
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
@@ -7,20 +8,37 @@ use std::{
     time::{Duration, Instant},
 };
 
+type ExecResultWithLineDetail = Result<(ExecOutput, Option<ExecLineDetail>), String>;
+
 fn vi_to_string(v: &[i64]) -> String {
-    format!(
+    const MAX_CHARS: usize = 30;
+    let mut string = format!(
         "({})",
         v.iter()
             .map(i64::to_string)
             .intersperse(", ".into())
             .collect::<String>()
-    )
-}
+    );
 
-#[derive(Debug, Clone)]
-pub enum ExecOutput {
-    Value(i64),
-    Array(Vec<i64>),
+    for i in (1..=3).rev() {
+        if string.len() > MAX_CHARS {
+            string = format!(
+                "({}, ({} more..))",
+                v.iter()
+                    .take(i)
+                    .map(i64::to_string)
+                    .intersperse(", ".into())
+                    .collect::<String>(),
+                v.len() - i,
+            );
+        }
+    }
+
+    if string.len() > MAX_CHARS {
+        string = format!("({} values..)", v.len(),);
+    }
+
+    string
 }
 
 impl ExecOutput {
@@ -68,68 +86,26 @@ impl fmt::Display for ExecOutput {
     }
 }
 
-type ExecResult = Result<ExecOutput, String>;
-type ExecResultWithLineDetail = Result<(ExecOutput, Option<ExecLineDetail>), String>;
-
-#[derive(Debug, Clone)]
-struct ExecLineDetail {
-    name: &'static str,
-    operation: String,
-    output: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExecDetails {
-    output: ExecOutput,
-    details: Vec<ExecLineDetail>,
-}
-
-type ExecResultWithDetails = Result<ExecDetails, String>;
-
 impl ExecDetails {
     pub fn value(&self) -> i64 {
         self.output.value()
     }
-}
 
-impl fmt::Display for ExecDetails {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let front_width = f.width().unwrap_or(8);
-        if let Some(middle_width) = self
-            .details
-            .iter()
-            .map(|line| line.operation.len())
-            .max()
-            .map(|w| w.max(15))
-        {
-            for line in self.details.iter() {
-                writeln!(
-                    f,
-                    "{:>front_width$} {:middle_width$} => {}",
-                    line.name.bold().bright_yellow(),
-                    line.operation.bright_magenta(),
-                    line.output
-                )?;
-            }
-            write!(
-                f,
-                "{:>front_width$} {:.<middle_width$} => ",
-                "Result".bold().bright_green(),
-                ""
-            )?;
-            if let ExecOutput::Array(v) = &self.output {
-                if v.len() > 1 {
-                    write!(f, "+(...) => ")?;
-                }
-            }
-            write!(f, "{}", self.output.value().bold())
-        } else {
-            write!(
-                f,
-                "{:>front_width$} => {}",
-                "Result".bold().bright_cyan(),
-                self.output.to_string().bold()
-            )
+    pub fn result_string(&self) -> String {
+        match &self.output {
+            ExecOutput::Value(i) => i.to_string(),
+            ExecOutput::Array(v) => vi_to_string(v),
+        }
+    }
+
+    pub fn raw_string(&self) -> String {
+        match &self.output {
+            ExecOutput::Value(i) => i.to_string(),
+            ExecOutput::Array(v) => v
+                .iter()
+                .map(i64::to_string)
+                .intersperse(",".into())
+                .collect::<String>(),
         }
     }
 }
@@ -591,16 +567,33 @@ impl GrammarRule {
             size: lhs as usize,
             child: Box::new(rhs),
             exec: Box::new(move |rhs, rng| {
-                let mut v = rhs.clone();
-                let new_size = lhs as usize;
-                if v.len() < new_size {
+                let k = lhs as usize;
+                let n = rhs.len();
+                if rhs.len() < k {
                     return Err(format!(
                         "Unexpected array length on right hand side; expected length of {}",
                         lhs
                     ));
                 }
-                v.shuffle(rng);
-                v.resize(new_size, 0);
+                const THRESHOLD: f64 = 0.7;
+                let v = if (k as f64) < (THRESHOLD * n as f64) {
+                    let mut seen = vec![false; rhs.len()];
+                    (0..k)
+                        .map(|_| loop {
+                            let i = rng.gen_range(0..rhs.len());
+                            if seen[i] {
+                                continue;
+                            }
+                            seen[i] = true;
+                            return rhs[i];
+                        })
+                        .collect()
+                } else {
+                    let mut v = rhs.clone();
+                    v.shuffle(rng);
+                    v.resize(k, 0);
+                    v
+                };
                 Ok(ExecOutput::Array(v))
             }),
             min_max: Box::new(move |rhs| {
@@ -676,6 +669,28 @@ impl GrammarRule {
                 Ok(MinMaxOutput::Value(MinMax { min, max }))
             }),
             to_string: Box::new(move |rhs| format!("-({})", rhs)),
+        }
+    }
+
+    fn rge(lhs: i64, rhs: i64) -> Self {
+        let output = if lhs < rhs {
+            (lhs..=rhs).collect::<Vec<_>>()
+        } else {
+            (rhs..=lhs).rev().collect()
+        };
+
+        let min_max_arr = output
+            .iter()
+            .cloned()
+            .map(|i| MinMax { min: i, max: i })
+            .collect::<Vec<_>>();
+
+        Self::Generator {
+            name: "Rge",
+            size: output.len(),
+            exec: Box::new(move |_| Ok(ExecOutput::Array(output.clone()))),
+            min_max: Box::new(move || Ok(MinMaxOutput::Array(min_max_arr.clone()))),
+            to_string: Box::new(move || format!("({lhs}..{rhs})")),
         }
     }
 
@@ -1080,6 +1095,10 @@ fn primary(tokenizer: &mut Tokenizer, expected: &'static str) -> Result<GrammarR
             let rhs = primary(tokenizer, "Array")?;
             Ok(GrammarRule::cho(lhs, rhs))
         }
+        Some(Token::Range(lhs, rhs)) => {
+            tokenizer.next();
+            Ok(GrammarRule::rge(lhs, rhs))
+        }
         Some(Token::Unknown(c)) => Err(GrammarError {
             error_type: GrammarErrorType::UnknownToken(c),
             error_index: tokenizer.expended_count(),
@@ -1372,6 +1391,22 @@ mod tests {
                 input_string: _,
             })
         );
+
+        let x = "3a0..2";
+        let result = Grammar::parse(x);
+        assert_matches!(
+            result,
+            Err(GrammarError {
+                error_type: GrammarErrorType::IncompatibleArrayLength {
+                    token: Token::Advantage(3),
+                    length: 2,
+                    expected: 3,
+                },
+                error_index: 2,
+                error_length: 4,
+                input_string: _,
+            })
+        );
     }
 
     #[test]
@@ -1398,6 +1433,13 @@ mod tests {
         assert_eq!(grammar.max(), 20);
 
         let x = "z3d20";
+        let result = Grammar::parse(x);
+        assert!(result.is_ok());
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 1);
+        assert_eq!(grammar.max(), 20);
+
+        let x = "1..=20";
         let result = Grammar::parse(x);
         assert!(result.is_ok());
         let grammar = result.unwrap();

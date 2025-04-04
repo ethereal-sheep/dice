@@ -3,7 +3,7 @@ use core::fmt;
 use std::cmp::Ordering;
 
 use clap::{arg, command, value_parser, Command};
-use dice::{Dice, RollOptions, TestOptions};
+use dice::{Dice, ExecOutput, RollOptions, TestOptions};
 use owo_colors::OwoColorize;
 use rand::{rngs::SmallRng, SeedableRng};
 
@@ -26,7 +26,7 @@ pub fn main() {
                     .value_parser(value_parser!(u64)),
                 )
                 .arg(arg!(
-                    --raw "Returns the raw value if available"
+                    --raw "Prints a delimetered list of values if result is an array"
                 )),
         )
         .subcommand(
@@ -81,6 +81,7 @@ pub fn main() {
     let start_width = 12;
     if let Some(matches) = matches.subcommand_matches("roll") {
         let is_debug = matches.get_flag("debug");
+        let is_raw = matches.get_flag("raw");
         if is_debug {
             if !matches.get_flag("nologo") {
                 println!("{:>start_width$}", Logo {});
@@ -139,9 +140,45 @@ pub fn main() {
                     match result {
                         Ok(result) => {
                             if is_debug {
-                                println!("{:start_width$}", result);
+                                if let Some(middle_width) = result
+                                    .details
+                                    .iter()
+                                    .map(|line| line.operation.len())
+                                    .max()
+                                    .map(|w| w.max(15))
+                                {
+                                    for line in result.details.iter() {
+                                        println!(
+                                            "{:>start_width$} {:middle_width$} => {}",
+                                            line.name.bold().bright_yellow(),
+                                            line.operation.bright_magenta(),
+                                            line.output
+                                        );
+                                    }
+                                    print!(
+                                        "{:>start_width$} {:.<middle_width$} => ",
+                                        "Result".bold().bright_green(),
+                                        ""
+                                    );
+                                    if let ExecOutput::Array(v) = &result.output {
+                                        if !is_raw {
+                                            if v.len() > 1 {
+                                                print!("+(...) => ");
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    print!("{:>start_width$} => ", "Result".bold().bright_cyan());
+                                }
+
+                                println!("{}", result.result_string().bold());
                             }
-                            println!("{}", result.value())
+
+                            if is_raw {
+                                println!("{}", result.raw_string())
+                            } else {
+                                println!("{}", result.value())
+                            }
                         }
                         Err(err) => println!("{:>start_width$} {}", "Error".red().bold(), err),
                     }
@@ -290,7 +327,7 @@ pub fn main() {
                             "NUM",
                             "An integer value that *MUST* be provided by the user."
                         ),
-                        Content::subheader("COUNT?", "A NUM that defaults to 1 if omitted."),
+                        Content::subheader("COUNT?", "An unsigned NUM that defaults to 1 if omitted."),
                     ]
                 ),
                 (
@@ -313,6 +350,19 @@ pub fn main() {
                         Content::subheader(
                             "Desc.",
                             "Rolls 1 or more dice and returns an array of the results."
+                        ),
+                    ]
+                ),
+                (
+                    "RANGE",
+                    &[
+                        Content::subheader("Keyword", ".."),
+                        Content::subheader("Usage", "<START>..<END> => ARR"),
+                        Content::paragraph("where START and END are NUMs"),
+                        Content::subheader("Example", "1..20, 0..5, -1..-10, .."),
+                        Content::subheader(
+                            "Desc.",
+                            "Creates an array of values from START to END inclusively."
                         ),
                     ]
                 ),

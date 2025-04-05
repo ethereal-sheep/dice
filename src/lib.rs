@@ -214,18 +214,31 @@ mod tests {
         let result = x.parse::<Dice>();
         match result {
             Ok(dice) => {
-                println!("{}", dice);
-                println!(
-                    "{:?}",
-                    dice.roll(
-                        &mut thread_rng(),
-                        RollOptions {
-                            include_line_details: true
-                        }
-                    )
+                let result = dice.roll(
+                    &mut thread_rng(),
+                    RollOptions {
+                        include_line_details: true,
+                    },
                 );
+                match result {
+                    Ok(details) => assert!(details.details.len() > 0),
+                    Err(_) => assert!(false),
+                }
+
+                let result = dice.test(
+                    &mut thread_rng(),
+                    TestOptions {
+                        is_debug: true,
+                        test_size: 100,
+                        interval_callback: None,
+                    },
+                );
+                match result {
+                    Ok(details) => assert!(details.details.len() > 0),
+                    Err(_) => assert!(false),
+                }
             }
-            Err(err) => println!("{}", err),
+            Err(_) => assert!(false),
         }
     }
 }

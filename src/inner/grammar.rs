@@ -3,9 +3,10 @@ use crate::{
     ExecDetails, ExecLineDetail, ExecOutput, ExecResult, ExecResultWithDetails, OperationTestInfo,
     OverallTestInfo, RollOptions, TestDetails, TestLineDetail, TestOptions, TestResultWithDetails,
 };
-use core::fmt;
+use core::{fmt, num};
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
+use std::collections::HashSet;
 use std::{rc::Rc, time::Instant};
 
 type ExecResultWithLineDetail = Result<(ExecOutput, Option<ExecLineDetail>), String>;
@@ -169,6 +170,7 @@ pub(crate) struct MinMax {
 pub(crate) enum MinMaxOutput {
     Value(MinMax),
     Array(Vec<MinMax>),
+    Permutation(usize, Vec<MinMax>),
 }
 
 type MinMaxResult = Result<MinMaxOutput, String>;
@@ -183,6 +185,14 @@ impl MinMaxOutput {
                     max: acc.max + x.max,
                 })
             }
+            MinMaxOutput::Permutation(n, vec) => {
+                vec.iter()
+                    .take(*n)
+                    .fold(MinMax { min: 0, max: 0 }, |acc, x| MinMax {
+                        min: acc.min + x.min,
+                        max: acc.max + x.max,
+                    })
+            }
         }
     }
 
@@ -192,6 +202,15 @@ impl MinMaxOutput {
                 Err(format!("Expected array, but got Value({:?}) instead", m))
             }
             MinMaxOutput::Array(vec) => Ok(vec.clone()),
+            MinMaxOutput::Permutation(n, vec) => Ok(vec.iter().cloned().take(*n).collect()),
+        }
+    }
+
+    pub(crate) fn permutation(&self) -> Option<(usize, Vec<MinMax>)> {
+        match self {
+            MinMaxOutput::Value(_) => None,
+            MinMaxOutput::Array(_) => None,
+            MinMaxOutput::Permutation(n, vec) => Some((*n, vec.clone())),
         }
     }
 }
@@ -223,6 +242,12 @@ macro_rules! to_string_fn {
     };
 }
 
+macro_rules! possible_values_mod_fn {
+    () => {
+        Box<dyn Fn(&Self, usize) -> Vec<usize>>
+    };
+}
+
 pub(crate) enum GrammarRule {
     Aggregate {
         name: &'static str,
@@ -238,6 +263,7 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(),
         min_max: min_max_fn!(),
         to_string: to_string_fn!(),
+        possible_values_mod: possible_values_mod_fn!(),
     },
     UnaryNumber {
         name: &'static str,
@@ -247,6 +273,7 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(i64),
         min_max: min_max_fn!(MinMax),
         to_string: to_string_fn!(i64),
+        possible_values_mod: possible_values_mod_fn!(),
     },
     UnaryArray {
         name: &'static str,
@@ -256,6 +283,18 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(&Vec<i64>),
         min_max: min_max_fn!(&Vec<MinMax>),
         to_string: to_string_fn!(&Vec<i64>),
+        possible_values_mod: possible_values_mod_fn!(),
+    },
+    ArrayArray {
+        name: &'static str,
+        operation: String,
+        size: usize,
+        lhs: Box<GrammarRule>,
+        rhs: Box<GrammarRule>,
+        exec: exec_fn!(&Vec<i64>, &Vec<i64>),
+        min_max: min_max_fn!(&MinMaxOutput, &MinMaxOutput),
+        to_string: to_string_fn!(&Vec<i64>, &Vec<i64>),
+        possible_values_mod: possible_values_mod_fn!(),
     },
     Binary {
         name: &'static str,
@@ -266,6 +305,7 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(i64, i64),
         min_max: min_max_fn!(MinMax, MinMax),
         to_string: to_string_fn!(i64, i64),
+        possible_values_mod: possible_values_mod_fn!(),
     },
 }
 
@@ -301,6 +341,13 @@ impl fmt::Display for GrammarRule {
                 rhs.fmt(f)?;
                 write!(f, ")")
             }
+            GrammarRule::ArrayArray { name, lhs, rhs, .. } => {
+                write!(f, "{}(", name)?;
+                lhs.fmt(f)?;
+                write!(f, ", ")?;
+                rhs.fmt(f)?;
+                write!(f, ")")
+            }
         }
     }
 }
@@ -325,6 +372,14 @@ impl fmt::Debug for StackFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "StackFn({})", self.name)
     }
+}
+
+fn sum_possible_values_mod(possible_values: &Vec<Vec<usize>>, modulo: usize) -> Vec<usize> {
+    vec![]
+}
+
+fn mul_possible_values_mod(possible_values: &Vec<Vec<usize>>, modulo: usize) -> Vec<usize> {
+    vec![]
 }
 
 impl GrammarRule {
@@ -357,6 +412,18 @@ impl GrammarRule {
                 }))
             }),
             to_string: Box::new(move |lhs, rhs| format!("{} + {}", lhs, rhs)),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::Binary { lhs, rhs, .. } = something {
+                    return sum_possible_values_mod(
+                        &vec![
+                            lhs.possible_values_mod(modulo),
+                            rhs.possible_values_mod(modulo),
+                        ],
+                        modulo,
+                    );
+                }
+                vec![]
+            }),
         }
     }
 
@@ -375,6 +442,22 @@ impl GrammarRule {
                 }))
             }),
             to_string: Box::new(move |lhs, rhs| format!("{} - {}", lhs, rhs)),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::Binary { lhs, rhs, .. } = something {
+                    return sum_possible_values_mod(
+                        &vec![
+                            lhs.possible_values_mod(modulo),
+                            rhs.possible_values_mod(modulo)
+                                .into_iter()
+                                .map(|i| -(i as i64).rem_euclid(modulo as i64) as usize)
+                                .rev()
+                                .collect(),
+                        ],
+                        modulo,
+                    );
+                }
+                vec![]
+            }),
         }
     }
 
@@ -400,6 +483,81 @@ impl GrammarRule {
                 }))
             }),
             to_string: Box::new(move |lhs, rhs| format!("{} x {}", lhs, rhs)),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::Binary { lhs, rhs, .. } = something {
+                    return mul_possible_values_mod(
+                        &vec![
+                            lhs.possible_values_mod(modulo),
+                            rhs.possible_values_mod(modulo),
+                        ],
+                        modulo,
+                    );
+                }
+                vec![]
+            }),
+        }
+    }
+
+    fn sel(lhs: Self, rhs: Self) -> Self {
+        Self::ArrayArray {
+            name: "Sel",
+            operation: "(...)|(...)".into(),
+            size: rhs.len(),
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            exec: Box::new(move |lhs, rhs, _| {
+                Ok(ExecOutput::Array(
+                    rhs.iter()
+                        .map(|i| lhs[i.rem_euclid(lhs.len() as i64) as usize])
+                        .collect(),
+                ))
+            }),
+            min_max: Box::new(move |lhs, rhs| {
+                // let rhs_permutation = rhs.permutation();
+                // if let Some((n, lhs)) = lhs.permutation() {
+                //     let rhs_len = if let Some((n, _)) = rhs_permutation {
+                //         n
+                //     } else {
+                //         rhs.array()?.len()
+                //     };
+                //     let rhs = rhs.array()?;
+                //     // if n < rhs_len {
+                //     //     return Err(format!(
+                //     //         "Unexpected array length on left hand side; expected length of {}",
+                //     //         rhs_len
+                //     //     ));
+                //     // }
+                //     return Ok(MinMaxOutput::Permutation(rhs.len(), lhs));
+                // }
+
+                let lhs = lhs.array()?;
+                let rhs = rhs.array()?;
+
+                // if lhs.len() < rhs.len() {
+                //     return Err(format!(
+                //         "Unexpected array length on left hand side; expected length of {}",
+                //         rhs.len()
+                //     ));
+                // }
+
+                Ok(MinMaxOutput::Array(
+                    rhs.iter()
+                        .map(|i| MinMax {
+                            min: lhs[i.min.rem_euclid(lhs.len() as i64) as usize].min,
+                            max: lhs[i.max.rem_euclid(lhs.len() as i64) as usize].max,
+                        })
+                        .collect(),
+                ))
+            }),
+            to_string: Box::new(move |lhs, rhs| {
+                format!("{} | {}", vi_to_string(lhs), vi_to_string(rhs))
+            }),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::ArrayArray { lhs, rhs, .. } = something {
+                    if let Self::Aggregate { children, .. } = lhs.as_ref() {}
+                }
+                vec![]
+            }),
         }
     }
 
@@ -450,6 +608,12 @@ impl GrammarRule {
                 ))
             }),
             to_string: Box::new(move |rhs| format!("{}A{}", lhs, vi_to_string(rhs))),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::ArrayArray { lhs, rhs, .. } = something {
+                    // return child.possible_values_mod(modulo);
+                }
+                vec![]
+            }),
         }
     }
 
@@ -502,6 +666,12 @@ impl GrammarRule {
                 ))
             }),
             to_string: Box::new(move |rhs| format!("{}Z{}", lhs, vi_to_string(rhs))),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::UnaryArray { child, .. } = something {
+                    return child.possible_values_mod(modulo);
+                }
+                vec![]
+            }),
         }
     }
 
@@ -527,6 +697,12 @@ impl GrammarRule {
                 Ok(MinMaxOutput::Array(vec![MinMax { min, max }; new_size]))
             }),
             to_string: Box::new(move |rhs| format!("{}C{}", lhs, vi_to_string(rhs))),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::UnaryArray { child, .. } = something {
+                    return child.possible_values_mod(modulo);
+                }
+                vec![]
+            }),
         }
     }
 
@@ -579,10 +755,9 @@ impl GrammarRule {
 
                 min_values.sort();
                 max_values.sort_by(|a: &i64, b| b.cmp(a));
-                min_values.resize(new_size, 0);
-                max_values.resize(new_size, 0);
 
-                Ok(MinMaxOutput::Array(
+                Ok(MinMaxOutput::Permutation(
+                    new_size,
                     min_values
                         .iter()
                         .zip(max_values.iter())
@@ -594,6 +769,12 @@ impl GrammarRule {
                 ))
             }),
             to_string: Box::new(move |rhs| format!("{}P{}", lhs, vi_to_string(rhs))),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::UnaryArray { child, .. } = something {
+                    return child.possible_values_mod(modulo);
+                }
+                vec![]
+            }),
         }
     }
 
@@ -623,6 +804,17 @@ impl GrammarRule {
                     rhs
                 )
             }),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::Generator { .. } = something {
+                    let rhs = rhs as usize;
+                    return if rhs >= modulo {
+                        (0..modulo).collect()
+                    } else {
+                        (1..=rhs).collect()
+                    };
+                }
+                vec![]
+            }),
         }
     }
 
@@ -639,6 +831,17 @@ impl GrammarRule {
                 Ok(MinMaxOutput::Value(MinMax { min, max }))
             }),
             to_string: Box::new(move |rhs| format!("-({})", rhs)),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::UnaryNumber { child, .. } = something {
+                    return child
+                        .possible_values_mod(modulo)
+                        .into_iter()
+                        .map(|i| -(i as i64).rem_euclid(modulo as i64) as usize)
+                        .rev()
+                        .collect();
+                }
+                vec![]
+            }),
         }
     }
 
@@ -655,12 +858,29 @@ impl GrammarRule {
             .map(|i| MinMax { min: i, max: i })
             .collect::<Vec<_>>();
 
+        let possible_values = output.clone();
+
         Self::Generator {
             name: "Rge",
             size: output.len(),
             exec: Box::new(move |_| Ok(ExecOutput::Array(output.clone()))),
             min_max: Box::new(move || Ok(MinMaxOutput::Array(min_max_arr.clone()))),
             to_string: Box::new(move || format!("({lhs}..{rhs})")),
+            possible_values_mod: Box::new(move |something, modulo: usize| {
+                if let Self::Generator { .. } = something {
+                    return if possible_values.len() >= modulo {
+                        (0..modulo).collect()
+                    } else {
+                        let mut v: Vec<usize> = possible_values
+                            .iter()
+                            .map(|i| i.rem_euclid(modulo as i64) as usize)
+                            .collect();
+                        v.sort();
+                        v
+                    };
+                }
+                vec![]
+            }),
         }
     }
 
@@ -672,8 +892,77 @@ impl GrammarRule {
             GrammarRule::UnaryNumber { size, .. } => *size,
             GrammarRule::UnaryArray { size, .. } => *size,
             GrammarRule::Binary { size, .. } => *size,
+            GrammarRule::ArrayArray { size, .. } => *size,
         }
     }
+
+    fn possible_values_mod(&self, modulo: usize) -> Vec<usize> {
+        match &self {
+            GrammarRule::Aggregate { children, .. } => {
+                let mut set = HashSet::new();
+                for child in children {
+                    for value in child.possible_values_mod(modulo) {
+                        set.insert(value);
+                        if set.len() == modulo {
+                            break;
+                        }
+                    }
+                }
+                let mut v: Vec<usize> = set.iter().cloned().collect();
+                v.sort();
+                v
+            }
+            GrammarRule::Number { number, .. } => vec![number.rem_euclid(modulo as i64) as usize],
+            GrammarRule::Generator {
+                possible_values_mod,
+                ..
+            } => possible_values_mod(&self, modulo),
+            GrammarRule::UnaryNumber {
+                possible_values_mod,
+                ..
+            } => possible_values_mod(&self, modulo),
+            GrammarRule::UnaryArray {
+                possible_values_mod,
+                ..
+            } => possible_values_mod(&self, modulo),
+            GrammarRule::ArrayArray {
+                possible_values_mod,
+                ..
+            } => possible_values_mod(&self, modulo),
+            GrammarRule::Binary {
+                possible_values_mod,
+                ..
+            } => possible_values_mod(&self, modulo),
+        }
+    }
+
+    // fn possible(&self, val: usize, modulo: usize) -> bool {
+    //     match &self {
+    //         GrammarRule::Aggregate { children, .. } => Ok(MinMaxOutput::Array(
+    //             children
+    //                 .iter()
+    //                 .map(|c| c.min_max().map(|o| o.value()))
+    //                 .collect::<Result<Vec<MinMax>, String>>()?,
+    //         )),
+    //         GrammarRule::Number { number, .. } => *number as usize == val,
+    //         GrammarRule::Generator { min_max, .. } => min_max(),
+    //         GrammarRule::UnaryNumber { child, min_max, .. } => {
+    //             min_max(child.min_max().map(|o| o.value())?)
+    //         }
+    //         GrammarRule::UnaryArray { child, min_max, .. } => {
+    //             min_max(&child.min_max().and_then(|o| o.array())?)
+    //         }
+    //         GrammarRule::ArrayArray {
+    //             lhs, rhs, min_max, ..
+    //         } => min_max(&lhs.min_max()?, &rhs.min_max()?),
+    //         GrammarRule::Binary {
+    //             lhs, rhs, min_max, ..
+    //         } => min_max(
+    //             lhs.min_max().map(|o| o.value())?,
+    //             rhs.min_max().map(|o| o.value())?,
+    //         ),
+    //     }
+    // }
 
     fn min_max(&self) -> MinMaxResult {
         match &self {
@@ -694,6 +983,9 @@ impl GrammarRule {
             GrammarRule::UnaryArray { child, min_max, .. } => {
                 min_max(&child.min_max().and_then(|o| o.array())?)
             }
+            GrammarRule::ArrayArray {
+                lhs, rhs, min_max, ..
+            } => min_max(&lhs.min_max()?, &rhs.min_max()?),
             GrammarRule::Binary {
                 lhs, rhs, min_max, ..
             } => min_max(
@@ -786,6 +1078,30 @@ impl GrammarRule {
                     }),
                 }
             }
+            GrammarRule::ArrayArray {
+                name,
+                operation,
+                lhs,
+                rhs,
+                exec,
+                to_string,
+                ..
+            } => {
+                let lhs_index = lhs.dfs(callstack);
+                let rhs_index = rhs.dfs(callstack);
+                StackFn {
+                    name,
+                    operation,
+                    exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
+                        let lhs = &stack.get(lhs_index).unwrap().array()?;
+                        let rhs = &stack.get(rhs_index).unwrap().array()?;
+                        Ok(exec(lhs, rhs, rng)?.with_line_detail(
+                            name,
+                            options.include_line_details.then(|| to_string(lhs, rhs)),
+                        ))
+                    }),
+                }
+            }
             GrammarRule::Binary {
                 name,
                 operation,
@@ -852,7 +1168,7 @@ impl fmt::Display for GrammarErrorType {
             } => {
                 write!(
                     f,
-                    "Incompatible Array length; {:?} expects length of {} but received {}",
+                    "Incompatible array length; {:?} expects length of {} but received {}",
                     token, expected, length
                 )
             }
@@ -1005,6 +1321,60 @@ fn primary(tokenizer: &mut Tokenizer, expected: &'static str) -> Result<GrammarR
                 };
             }
             Ok(GrammarRule::arr(arr))
+        }
+        Some(Token::LeftSquareBracket) => {
+            tokenizer.next();
+            let lhs = primary(tokenizer, "Array")?;
+            match tokenizer.peek() {
+                Some(Token::Pipe) => {
+                    tokenizer.next();
+                    let rhs = primary(tokenizer, "Array")?;
+                    match tokenizer.peek() {
+                        Some(Token::RightSquareBracket) => {
+                            tokenizer.next();
+                            return Ok(GrammarRule::sel(lhs, rhs));
+                        }
+                        Some(token) => {
+                            return Err(GrammarError {
+                                error_type: GrammarErrorType::UnexpectedToken {
+                                    token,
+                                    expected: "']'",
+                                },
+                                error_index: tokenizer.expended_count(),
+                                error_length: tokenizer.peek_token_count(),
+                                input_string: tokenizer.input_str().into(),
+                            });
+                        }
+                        None => {
+                            return Err(GrammarError {
+                                error_type: GrammarErrorType::UnexpectedEnd { expected: "']'" },
+                                error_index: tokenizer.expended_count(),
+                                error_length: 1,
+                                input_string: tokenizer.input_str().into(),
+                            });
+                        }
+                    };
+                }
+                Some(token) => {
+                    return Err(GrammarError {
+                        error_type: GrammarErrorType::UnexpectedToken {
+                            token,
+                            expected: "'|'",
+                        },
+                        error_index: tokenizer.expended_count(),
+                        error_length: tokenizer.peek_token_count(),
+                        input_string: tokenizer.input_str().into(),
+                    });
+                }
+                None => {
+                    return Err(GrammarError {
+                        error_type: GrammarErrorType::UnexpectedEnd { expected: "'|'" },
+                        error_index: tokenizer.expended_count(),
+                        error_length: 1,
+                        input_string: tokenizer.input_str().into(),
+                    });
+                }
+            };
         }
         Some(Token::Dice(lhs, rhs)) => {
             tokenizer.next();
@@ -1304,7 +1674,7 @@ mod tests {
             })
         );
 
-        let x = "3a0..2";
+        let x = "3a0..1";
         let result = Grammar::parse(x);
         assert_matches!(
             result,
@@ -1325,35 +1695,36 @@ mod tests {
     fn test_min_max() {
         let x = "3d20";
         let result = Grammar::parse(x);
-        assert!(result.is_ok());
         let grammar = result.unwrap();
         assert_eq!(grammar.min(), 3);
         assert_eq!(grammar.max(), 60);
 
         let x = "30d200";
         let result = Grammar::parse(x);
-        assert!(result.is_ok());
         let grammar = result.unwrap();
         assert_eq!(grammar.min(), 30);
         assert_eq!(grammar.max(), 6000);
 
         let x = "a3d20";
         let result = Grammar::parse(x);
-        assert!(result.is_ok());
         let grammar = result.unwrap();
         assert_eq!(grammar.min(), 1);
         assert_eq!(grammar.max(), 20);
 
         let x = "z3d20";
         let result = Grammar::parse(x);
-        assert!(result.is_ok());
         let grammar = result.unwrap();
         assert_eq!(grammar.min(), 1);
         assert_eq!(grammar.max(), 20);
 
-        let x = "1..=20";
+        let x = "p1..20";
         let result = Grammar::parse(x);
-        assert!(result.is_ok());
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 1);
+        assert_eq!(grammar.max(), 20);
+
+        let x = "[p1..20|3]";
+        let result = Grammar::parse(x);
         let grammar = result.unwrap();
         assert_eq!(grammar.min(), 1);
         assert_eq!(grammar.max(), 20);

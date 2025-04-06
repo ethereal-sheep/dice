@@ -16,6 +16,9 @@ pub enum Token {
     LeftParenthesis,
     RightParenthesis,
     Comma,
+    LeftSquareBracket,
+    RightSquareBracket,
+    Pipe,
     Unknown(String),
 }
 
@@ -180,6 +183,27 @@ static TOKENIZERS: &[MatchTokenFn] = &[
         None
     },
     |chars| {
+        // left square bracket
+        if let Some('[') = chars.next() {
+            return Some(Token::LeftSquareBracket);
+        }
+        None
+    },
+    |chars| {
+        // right square bracket
+        if let Some(']') = chars.next() {
+            return Some(Token::RightSquareBracket);
+        }
+        None
+    },
+    |chars| {
+        // pipe
+        if let Some('|') = chars.next() {
+            return Some(Token::Pipe);
+        }
+        None
+    },
+    |chars| {
         // unknown
         if let Some(c) = chars.next() {
             for tokenizer in TOKENIZERS {
@@ -272,7 +296,7 @@ impl Iterator for Tokenizer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    static BASE_DICE_STRING: &str = "123 + 2p(123,z4d2, d8, 4d4d4)1..=2";
+    static BASE_DICE_STRING: &str = "123 + 2p(123,z4d2, d8, 4d4d4)1..2[a|-1..20]";
 
     #[test]
     fn test_tokenizer_next() {
@@ -293,51 +317,41 @@ mod tests {
         assert_eq!(tokenizer.next(), Some(Token::Dice(1, 4)));
         assert_eq!(tokenizer.next(), Some(Token::RightParenthesis));
         assert_eq!(tokenizer.next(), Some(Token::Range(1, 2)));
+        assert_eq!(tokenizer.next(), Some(Token::LeftSquareBracket));
+        assert_eq!(tokenizer.next(), Some(Token::Advantage(1)));
+        assert_eq!(tokenizer.next(), Some(Token::Pipe));
+        assert_eq!(tokenizer.next(), Some(Token::Range(-1, 20)));
+        assert_eq!(tokenizer.next(), Some(Token::RightSquareBracket));
         assert_eq!(tokenizer.next(), None);
     }
 
     #[test]
     fn test_tokenizer_pos_range() {
-        let mut tokenizer = Tokenizer::new("0..=2");
+        let mut tokenizer = Tokenizer::new("0..2");
         assert_eq!(tokenizer.next(), Some(Token::Range(0, 2)));
         assert_eq!(tokenizer.next(), None);
-        let mut tokenizer = Tokenizer::new("0..2");
-        assert_eq!(tokenizer.next(), Some(Token::Range(0, 1)));
-        assert_eq!(tokenizer.next(), None);
         let mut tokenizer = Tokenizer::new("-2..2");
-        assert_eq!(tokenizer.next(), Some(Token::Range(-2, 1)));
+        assert_eq!(tokenizer.next(), Some(Token::Range(-2, 2)));
         assert_eq!(tokenizer.next(), None);
     }
 
     #[test]
     fn test_tokenizer_neg_range() {
-        let mut tokenizer = Tokenizer::new("0..=-2");
+        let mut tokenizer = Tokenizer::new("0..-2");
         assert_eq!(tokenizer.next(), Some(Token::Range(0, -2)));
         assert_eq!(tokenizer.next(), None);
-        let mut tokenizer = Tokenizer::new("0..-2");
-        assert_eq!(tokenizer.next(), Some(Token::Range(0, -1)));
-        assert_eq!(tokenizer.next(), None);
         let mut tokenizer = Tokenizer::new("2..-2");
-        assert_eq!(tokenizer.next(), Some(Token::Range(2, -1)));
+        assert_eq!(tokenizer.next(), Some(Token::Range(2, -2)));
         assert_eq!(tokenizer.next(), None);
     }
 
     #[test]
     fn test_tokenizer_zero_range() {
-        let mut tokenizer = Tokenizer::new("0..=0");
-        assert_eq!(tokenizer.next(), Some(Token::Range(0, 0)));
-        assert_eq!(tokenizer.next(), None);
         let mut tokenizer = Tokenizer::new("0..0");
         assert_eq!(tokenizer.next(), Some(Token::Range(0, 0)));
         assert_eq!(tokenizer.next(), None);
-        let mut tokenizer = Tokenizer::new("1..=1");
-        assert_eq!(tokenizer.next(), Some(Token::Range(1, 1)));
-        assert_eq!(tokenizer.next(), None);
         let mut tokenizer = Tokenizer::new("1..1");
         assert_eq!(tokenizer.next(), Some(Token::Range(1, 1)));
-        assert_eq!(tokenizer.next(), None);
-        let mut tokenizer = Tokenizer::new("-1..=-1");
-        assert_eq!(tokenizer.next(), Some(Token::Range(-1, -1)));
         assert_eq!(tokenizer.next(), None);
         let mut tokenizer = Tokenizer::new("-1..-1");
         assert_eq!(tokenizer.next(), Some(Token::Range(-1, -1)));
@@ -360,6 +374,11 @@ mod tests {
     fn test_tokenizer_peek() {
         let mut tokenizer = Tokenizer::new(BASE_DICE_STRING);
 
+        assert_eq!(tokenizer.peek(), tokenizer.next());
+        assert_eq!(tokenizer.peek(), tokenizer.next());
+        assert_eq!(tokenizer.peek(), tokenizer.next());
+        assert_eq!(tokenizer.peek(), tokenizer.next());
+        assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), tokenizer.next());

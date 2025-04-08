@@ -254,12 +254,6 @@ macro_rules! possible_values_fn {
     };
 }
 
-macro_rules! select_min_max_fn {
-    () => {
-        Box<dyn Fn(&Self, &Vec<MinMax>, usize, bool) -> MinMaxResult>
-    };
-}
-
 pub(crate) enum GrammarRule {
     Aggregate {
         name: &'static str,
@@ -304,7 +298,6 @@ pub(crate) enum GrammarRule {
         to_string: to_string_fn!(&Vec<i64>),
         possible_values: possible_values_fn!(),
         possible_values_mod: possible_values_mod_fn!(),
-        // select_min_max: select_min_max_fn!(),
     },
     Binary {
         name: &'static str,
@@ -712,22 +705,23 @@ impl GrammarRule {
                 if let Self::UnaryArray { child, .. } = something {
                     let v = child.nested_possible_values();
                     // for each value, find how many values in other dice it has
-                    let mut dice: Vec<HashMap<i64, (usize, usize)>> = vec![HashMap::new(); v.len()];
+                    let mut dice: Vec<HashMap<i64, (HashSet<usize>, HashSet<usize>)>> =
+                        vec![HashMap::new(); v.len()];
                     for i in 0..v.len() {
                         for lhs_value in v[i].iter().cloned() {
                             for j in (i + 1)..v.len() {
                                 for rhs_value in v[j].iter().cloned() {
                                     if lhs_value == rhs_value {
-                                        dice[i].entry(lhs_value).or_default().0 += 1;
-                                        dice[j].entry(rhs_value).or_default().0 += 1;
-                                        dice[i].entry(lhs_value).or_default().1 += 1;
-                                        dice[j].entry(rhs_value).or_default().1 += 1;
+                                        dice[i].entry(lhs_value).or_default().0.insert(j);
+                                        dice[i].entry(lhs_value).or_default().1.insert(j);
+                                        dice[j].entry(rhs_value).or_default().0.insert(i);
+                                        dice[j].entry(rhs_value).or_default().1.insert(i);
                                     } else if lhs_value > rhs_value {
-                                        dice[i].entry(lhs_value).or_default().1 += 1;
-                                        dice[j].entry(rhs_value).or_default().0 += 1;
+                                        dice[i].entry(lhs_value).or_default().1.insert(j);
+                                        dice[j].entry(rhs_value).or_default().0.insert(i);
                                     } else {
-                                        dice[i].entry(lhs_value).or_default().0 += 1;
-                                        dice[j].entry(rhs_value).or_default().1 += 1;
+                                        dice[i].entry(lhs_value).or_default().0.insert(j);
+                                        dice[j].entry(rhs_value).or_default().1.insert(i);
                                     }
                                 }
                             }
@@ -741,8 +735,8 @@ impl GrammarRule {
                                 for (value, (greater_eq, lesser_eq)) in map.iter() {
                                     let left_threshold = i;
                                     let right_threshold = v.len() - i - 1;
-                                    if *greater_eq >= left_threshold
-                                        && *lesser_eq >= right_threshold
+                                    if greater_eq.len() >= left_threshold
+                                        && lesser_eq.len() >= right_threshold
                                     {
                                         set.insert(*value);
                                     }
@@ -759,13 +753,6 @@ impl GrammarRule {
             possible_values_mod: Box::new(move |something, modulo: usize| {
                 nested_possible_values_to_mod(&something.nested_possible_values(), modulo)
             }),
-            // select_min_max: Box::new(move |something, lhs, modulo, maintain_order| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         // return child.possible_values_mod(modulo);
-            //         // child.
-            //     }
-            //     Ok(vec![])
-            // }),
         }
     }
 
@@ -822,22 +809,23 @@ impl GrammarRule {
                 if let Self::UnaryArray { child, .. } = something {
                     let v = child.nested_possible_values();
                     // for each value, find how many values in other dice it has
-                    let mut dice: Vec<HashMap<i64, (usize, usize)>> = vec![HashMap::new(); v.len()];
+                    let mut dice: Vec<HashMap<i64, (HashSet<usize>, HashSet<usize>)>> =
+                        vec![HashMap::new(); v.len()];
                     for i in 0..v.len() {
                         for lhs_value in v[i].iter().cloned() {
                             for j in (i + 1)..v.len() {
                                 for rhs_value in v[j].iter().cloned() {
                                     if lhs_value == rhs_value {
-                                        dice[i].entry(lhs_value).or_default().0 += 1;
-                                        dice[j].entry(rhs_value).or_default().0 += 1;
-                                        dice[i].entry(lhs_value).or_default().1 += 1;
-                                        dice[j].entry(rhs_value).or_default().1 += 1;
+                                        dice[i].entry(lhs_value).or_default().0.insert(j);
+                                        dice[i].entry(lhs_value).or_default().1.insert(j);
+                                        dice[j].entry(rhs_value).or_default().0.insert(i);
+                                        dice[j].entry(rhs_value).or_default().1.insert(i);
                                     } else if lhs_value > rhs_value {
-                                        dice[i].entry(lhs_value).or_default().0 += 1;
-                                        dice[j].entry(rhs_value).or_default().1 += 1;
+                                        dice[i].entry(lhs_value).or_default().1.insert(j);
+                                        dice[j].entry(rhs_value).or_default().0.insert(i);
                                     } else {
-                                        dice[i].entry(lhs_value).or_default().1 += 1;
-                                        dice[j].entry(rhs_value).or_default().0 += 1;
+                                        dice[i].entry(lhs_value).or_default().0.insert(j);
+                                        dice[j].entry(rhs_value).or_default().1.insert(i);
                                     }
                                 }
                             }
@@ -851,8 +839,8 @@ impl GrammarRule {
                                 for (value, (greater_eq, lesser_eq)) in map.iter() {
                                     let left_threshold = i;
                                     let right_threshold = v.len() - i - 1;
-                                    if *lesser_eq >= left_threshold
-                                        && *greater_eq >= right_threshold
+                                    if lesser_eq.len() >= left_threshold
+                                        && greater_eq.len() >= right_threshold
                                     {
                                         set.insert(*value);
                                     }
@@ -1112,23 +1100,12 @@ impl GrammarRule {
             min_max: Box::new(move || Ok(MinMaxOutput::Array(min_max_arr.clone()))),
             to_string: Box::new(move || format!("({lhs}..{rhs})")),
             possible_values: Box::new(move |_| vec![possible_values.clone()]),
-            possible_values_mod: Box::new(move |something, modulo: usize| {
-                if let Self::Generator { .. } = something {
-                    return if possible_values_mod.len() >= modulo {
-                        (0..modulo).collect()
-                    } else {
-                        let mut v: Vec<usize> = possible_values_mod
-                            .iter()
-                            .map(|i| i.rem_euclid(modulo as i64) as usize)
-                            .collect();
-                        v.sort();
-                        v
-                    }
+            possible_values_mod: Box::new(move |_, modulo: usize| {
+                possible_values_mod
                     .iter()
-                    .map(|i| vec![*i])
-                    .collect();
-                }
-                vec![]
+                    .map(|i| i.rem_euclid(modulo as i64) as usize)
+                    .map(|i| vec![i])
+                    .collect()
             }),
         }
     }
@@ -1233,7 +1210,6 @@ impl GrammarRule {
             GrammarRule::Generator {
                 possible_values, ..
             } => possible_values(self),
-
             GrammarRule::UnaryNumber {
                 possible_values, ..
             } => possible_values(self),
@@ -1245,34 +1221,6 @@ impl GrammarRule {
             } => possible_values(self),
         }
     }
-
-    // fn possible(&self, val: usize, modulo: usize) -> bool {
-    //     match &self {
-    //         GrammarRule::Aggregate { children, .. } => Ok(MinMaxOutput::Array(
-    //             children
-    //                 .iter()
-    //                 .map(|c| c.min_max().map(|o| o.value()))
-    //                 .collect::<Result<Vec<MinMax>, String>>()?,
-    //         )),
-    //         GrammarRule::Number { number, .. } => *number as usize == val,
-    //         GrammarRule::Generator { min_max, .. } => min_max(),
-    //         GrammarRule::UnaryNumber { child, min_max, .. } => {
-    //             min_max(child.min_max().map(|o| o.value())?)
-    //         }
-    //         GrammarRule::UnaryArray { child, min_max, .. } => {
-    //             min_max(&child.min_max().and_then(|o| o.array())?)
-    //         }
-    //         GrammarRule::ArrayArray {
-    //             lhs, rhs, min_max, ..
-    //         } => min_max(&lhs.min_max()?, &rhs.min_max()?),
-    //         GrammarRule::Binary {
-    //             lhs, rhs, min_max, ..
-    //         } => min_max(
-    //             lhs.min_max().map(|o| o.value())?,
-    //             rhs.min_max().map(|o| o.value())?,
-    //         ),
-    //     }
-    // }
 
     fn min_max(&self) -> MinMaxResult {
         match &self {
@@ -1288,14 +1236,25 @@ impl GrammarRule {
             })),
             GrammarRule::Select { lhs, rhs, .. } => {
                 let lhs = lhs.min_max()?.array()?;
-                let rhs = rhs.min_max()?.array()?;
+                let rhs = rhs.nested_possible_values_mod(lhs.len());
+
+                let max_values: Vec<_> = rhs
+                    .iter()
+                    .map(|v| v.iter().cloned().max_by_key(|i| lhs[*i].max).unwrap())
+                    .map(|i| lhs[i].max)
+                    .collect();
+                let min_values: Vec<_> = rhs
+                    .iter()
+                    .map(|v| v.iter().cloned().min_by_key(|i| lhs[*i].min).unwrap())
+                    .map(|i| lhs[i].min)
+                    .collect();
 
                 Ok(MinMaxOutput::Array(
-                    rhs.iter()
-                        .map(|i| MinMax {
-                            min: lhs[i.min.rem_euclid(lhs.len() as i64) as usize].min,
-                            max: lhs[i.max.rem_euclid(lhs.len() as i64) as usize].max,
-                        })
+                    min_values
+                        .iter()
+                        .cloned()
+                        .zip(max_values.iter().cloned())
+                        .map(|(min, max)| MinMax { min, max })
                         .collect(),
                 ))
             }
@@ -2041,26 +2000,32 @@ mod tests {
         assert_eq!(grammar.min(), 1);
         assert_eq!(grammar.max(), 20);
 
-        // let x = "[(d3, d6, d20)|(d3, d6, d20)]";
-        // // let result = Grammar::parse(x);
-        // // let grammar = result.unwrap();
+        let x = "[(1,2,3)|3p(2, 0, 2)]";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
 
-        // // assert_eq!(grammar.min(), 1);
-        // // assert_eq!(grammar.max(), 20);
+        assert_eq!(grammar.min(), 3);
+        assert_eq!(grammar.max(), 7);
 
         // let mut tokenizer = Tokenizer::new(x);
         // let result = expression(&mut tokenizer).unwrap();
-        // let p = result.nested_possible_values_mod(usize::MAX);
+        // let p = result.nested_possible_values_mod(7);
         // println!("{:?}", p);
     }
 
     #[test]
     fn test_nested_possible() {
-        let x = "2a(p(-1,3,5), p(-1, 2,4,6), p(-1,3,5,8,7), p(10,1, 0))";
+        let y = "(1,2,3)";
+        let x = "3a(d3, 100, d20, d150)";
         // let x = "(3d6, 2d4)";
+        let mut tokenizer = Tokenizer::new(y);
+        let result = expression(&mut tokenizer).unwrap();
+        let p = result.min_max().unwrap();
+        // println!("{} {}", p.array());
+
         let mut tokenizer = Tokenizer::new(x);
         let result = expression(&mut tokenizer).unwrap();
-        let p = result.nested_possible_values_mod(10);
+        let p = result.nested_possible_values_mod(3);
         println!("{:?}", p);
     }
 }

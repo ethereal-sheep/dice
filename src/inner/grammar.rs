@@ -1235,7 +1235,14 @@ impl GrammarRule {
                 max: *number,
             })),
             GrammarRule::Select { lhs, rhs, .. } => {
-                let lhs = lhs.min_max()?.array()?;
+                let lhs: Vec<MinMax> = lhs
+                    .nested_possible_values()
+                    .iter()
+                    .map(|v| MinMax {
+                        min: *v.iter().min().unwrap(),
+                        max: *v.iter().max().unwrap(),
+                    })
+                    .collect();
                 let rhs = rhs.nested_possible_values_mod(lhs.len());
 
                 let max_values: Vec<_> = rhs
@@ -2015,13 +2022,12 @@ mod tests {
 
     #[test]
     fn test_nested_possible() {
-        let y = "(1,2,3)";
-        let x = "3a(d3, 100, d20, d150)";
-        // let x = "(3d6, 2d4)";
-        let mut tokenizer = Tokenizer::new(y);
+        // let x = "[3p(d100, 80, 60, 40, 20)|1..2]";
+        let x = "0..8";
+        let mut tokenizer = Tokenizer::new(x);
         let result = expression(&mut tokenizer).unwrap();
-        let p = result.min_max().unwrap();
-        // println!("{} {}", p.array());
+        let p = result.min_max().unwrap().value();
+        println!("{} {}", p.min, p.max);
 
         let mut tokenizer = Tokenizer::new(x);
         let result = expression(&mut tokenizer).unwrap();

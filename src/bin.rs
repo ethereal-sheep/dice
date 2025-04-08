@@ -27,6 +27,9 @@ pub fn main() {
                 )
                 .arg(arg!(
                     --raw "Prints a delimetered list of values if result is an array"
+                ))
+                .arg(arg!(
+                    --experimental "Allows experimental features; might not work correctly!"
                 )),
         )
         .subcommand(
@@ -68,13 +71,19 @@ pub fn main() {
                         --reference <REF> "Outputs test data in reference to REF"
                     )
                     .value_parser(value_parser!(i64)).allow_hyphen_values(true).allow_negative_numbers(true),
-                ),
+                )
+                .arg(arg!(
+                    --experimental "Allows experimental features; might not work correctly!"
+                )),
         ).subcommand(
             Command::new("doc")
                 .about("Shows the dice script documentation")
                 .arg(arg!(
                     --nologo "Suppresses logo"
                 ))
+                .arg(arg!(
+                    --experimental "Show experimental features in documentation"
+                )),
         )
         .get_matches();
 
@@ -220,8 +229,8 @@ pub fn main() {
             let result = script.parse::<Dice>();
             match result {
                 Ok(dice) => {
-                    let test_size: usize = if let Some(n) = matches.get_one("size") {
-                        *n
+                    let test_size = if let Some(n) = matches.get_one::<u64>("size") {
+                        *n as usize
                     } else {
                         if is_debug {
                             println!(

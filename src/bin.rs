@@ -116,12 +116,12 @@ pub fn main() {
                             "Compiled".bold().yellow(),
                             dice.bright_magenta()
                         );
-                        println!(
-                            "{:>start_width$} {}..{}",
-                            "Range".bold().bright_cyan(),
-                            dice.min(),
-                            dice.max()
-                        );
+                        // println!(
+                        //     "{:>start_width$} {}..{}",
+                        //     "Range".bold().bright_cyan(),
+                        //     dice.min(),
+                        //     dice.max()
+                        // );
                     }
                     let seed = matches.get_one::<u64>("seed");
                     let mut rng: SmallRng = if let Some(seed) = seed {
@@ -371,8 +371,8 @@ pub fn main() {
                                 );
                             }
                             let reference = matches.get_one("reference").copied();
-                            let mut buckets = Buckets::from_range(dice.min(), dice.max());
-                            buckets.fill(&result.output);
+                            let buckets = Buckets::from_data(&result.output);
+                            // buckets.fill(&result.output);
                             buckets.print_histogram(
                                 start_width,
                                 *matches.get_one::<u64>("height").unwrap_or(&10) as usize,
@@ -952,6 +952,15 @@ impl Buckets {
             max,
             size: 0,
         }
+    }
+
+    fn from_data(data: &Vec<i64>) -> Self {
+        let min = data.iter().min().copied().unwrap_or(0);
+        let max = data.iter().max().copied().unwrap_or(0);
+
+        let mut buckets = Buckets::from_range(min, max);
+        buckets.fill(data);
+        buckets
     }
 
     fn fill(&mut self, data: &Vec<i64>) {

@@ -167,14 +167,6 @@ impl Dice {
         })
     }
 
-    pub fn min(&self) -> i64 {
-        self.grammar.min()
-    }
-
-    pub fn max(&self) -> i64 {
-        self.grammar.max()
-    }
-
     pub fn roll(&self, rng: &mut impl rand::Rng, options: RollOptions) -> ExecResultWithDetails {
         self.grammar.exec(rng, options)
     }
@@ -221,8 +213,8 @@ mod tests {
                     },
                 );
                 match result {
-                    Ok(details) => assert!(details.details.len() > 0),
-                    Err(_) => assert!(false),
+                    Ok(details) => assert!(!details.details.is_empty()),
+                    Err(_) => panic!(),
                 }
 
                 let result = dice.test(
@@ -234,11 +226,11 @@ mod tests {
                     },
                 );
                 match result {
-                    Ok(details) => assert!(details.details.len() > 0),
-                    Err(_) => assert!(false),
+                    Ok(details) => assert!(!details.details.is_empty()),
+                    Err(_) => panic!(),
                 }
             }
-            Err(_) => assert!(false),
+            Err(_) => panic!(),
         }
     }
 }

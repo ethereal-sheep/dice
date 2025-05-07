@@ -4,6 +4,8 @@ use crate::{
     OverallTestInfo, RollOptions, TestDetails, TestLineDetail, TestOptions, TestResultWithDetails,
 };
 use core::fmt;
+use num_bigint::BigUint;
+use num_traits::{FromPrimitive, One};
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
 use std::{rc::Rc, time::Instant};
@@ -39,6 +41,14 @@ fn vi_to_string(v: &[i64]) -> String {
     }
 
     string
+}
+
+fn factorial(n: u64) -> BigUint {
+    if n == 0 || n == 1 {
+        BigUint::one()
+    } else {
+        n * factorial(n - 1)
+    }
 }
 
 impl ExecOutput {
@@ -195,6 +205,7 @@ pub(crate) enum GrammarRule {
     Generator {
         name: &'static str,
         size: usize,
+        search_space_size: BigUint,
         exec: exec_fn!(),
         to_string: to_string_fn!(),
     },
@@ -210,6 +221,7 @@ pub(crate) enum GrammarRule {
         name: &'static str,
         operation: String,
         size: usize,
+        search_space_size: BigUint,
         child: Box<GrammarRule>,
         exec: exec_fn!(&Vec<i64>),
         to_string: to_string_fn!(&Vec<i64>),
@@ -354,6 +366,7 @@ impl GrammarRule {
             name: "Adv",
             operation: format!("{}A(...)", lhs),
             size: lhs as usize,
+            search_space_size: BigUint::one(),
             child: Box::new(rhs),
             exec: Box::new(move |rhs, _| {
                 let new_size = lhs as usize;
@@ -377,6 +390,7 @@ impl GrammarRule {
             name: "Dis",
             operation: format!("{}Z(...)", lhs),
             size: lhs as usize,
+            search_space_size: BigUint::one(),
             child: Box::new(rhs),
             exec: Box::new(move |rhs, _| {
                 let new_size = lhs as usize;
@@ -401,6 +415,7 @@ impl GrammarRule {
         Self::UnaryArray {
             name: "Cho",
             size: lhs as usize,
+            search_space_size: factorial(lhs),
             operation: format!("{}C(...)", lhs),
             child: Box::new(rhs),
             exec: Box::new(move |rhs, rng| {
@@ -421,6 +436,7 @@ impl GrammarRule {
             name: "Pic",
             operation: format!("{}P(...)", lhs),
             size: lhs as usize,
+            search_space_size: factorial(lhs),
             child: Box::new(rhs),
             exec: Box::new(move |rhs, rng| {
                 let k = lhs as usize;
@@ -460,6 +476,7 @@ impl GrammarRule {
         Self::Generator {
             name: "Die",
             size: lhs as usize,
+            search_space_size: BigUint::from_u64(rhs).unwrap().pow(lhs as u32),
             exec: Box::new(move |rng| {
                 let new_size = lhs as usize;
                 let mut r: Vec<i64> = vec![];
@@ -499,6 +516,7 @@ impl GrammarRule {
         Self::Generator {
             name: "Rge",
             size: output.len(),
+            search_space_size: BigUint::one(),
             exec: Box::new(move |_| Ok(ExecOutput::Array(output.clone()))),
             to_string: Box::new(move || format!("({lhs}..{rhs})")),
         }
@@ -516,12 +534,12 @@ impl GrammarRule {
         }
     }
 
-    fn dfs(self, callstack: &mut Vec<StackFn>) -> usize {
+    fn dfs(self, callstack: &mut Vec<StackFn>, search_space: &mut BigUint) -> usize {
         let f: StackFn = match self {
             GrammarRule::Aggregate { name, children } => {
                 let indices: Vec<usize> = children
                     .into_iter()
-                    .map(|child| child.dfs(callstack))
+                    .map(|child| child.dfs(callstack, search_space))
                     .collect();
                 StackFn {
                     name,
@@ -548,15 +566,19 @@ impl GrammarRule {
                 name,
                 exec,
                 to_string,
+                search_space_size,
                 ..
-            } => StackFn {
-                name,
-                operation: (to_string)(),
-                exec: Rc::new(move |_: &Vec<ExecOutput>, rng, options| {
-                    Ok(exec(rng)?
-                        .with_line_detail(name, options.include_line_details.then(&to_string)))
-                }),
-            },
+            } => {
+                *search_space *= search_space_size;
+                StackFn {
+                    name,
+                    operation: (to_string)(),
+                    exec: Rc::new(move |_: &Vec<ExecOutput>, rng, options| {
+                        Ok(exec(rng)?
+                            .with_line_detail(name, options.include_line_details.then(&to_string)))
+                    }),
+                }
+            }
             GrammarRule::UnaryNumber {
                 name,
                 operation,
@@ -565,7 +587,7 @@ impl GrammarRule {
                 to_string,
                 ..
             } => {
-                let index = child.dfs(callstack);
+                let index = child.dfs(callstack, search_space);
                 StackFn {
                     name,
                     operation,
@@ -584,9 +606,11 @@ impl GrammarRule {
                 child,
                 exec,
                 to_string,
+                search_space_size,
                 ..
             } => {
-                let index = child.dfs(callstack);
+                *search_space *= search_space_size;
+                let index = child.dfs(callstack, search_space);
                 StackFn {
                     name,
                     operation,
@@ -600,8 +624,8 @@ impl GrammarRule {
                 }
             }
             GrammarRule::Select { name, lhs, rhs, .. } => {
-                let lhs_index = lhs.dfs(callstack);
-                let rhs_index = rhs.dfs(callstack);
+                let lhs_index = lhs.dfs(callstack, search_space);
+                let rhs_index = rhs.dfs(callstack, search_space);
                 StackFn {
                     name,
                     operation: "(...)|(...)".into(),
@@ -631,8 +655,8 @@ impl GrammarRule {
                 to_string,
                 ..
             } => {
-                let lhs_index = lhs.dfs(callstack);
-                let rhs_index = rhs.dfs(callstack);
+                let lhs_index = lhs.dfs(callstack, search_space);
+                let rhs_index = rhs.dfs(callstack, search_space);
                 StackFn {
                     name,
                     operation,
@@ -983,7 +1007,7 @@ fn primary(tokenizer: &mut Tokenizer, expected: &'static str) -> Result<GrammarR
 pub(crate) struct Grammar {
     compiled_string: String,
     callstack: Vec<StackFn>,
-    // min_max: MinMax,
+    search_space: BigUint,
 }
 
 impl Grammar {
@@ -1000,14 +1024,14 @@ impl Grammar {
             });
         }
         let mut callstack: Vec<StackFn> = vec![];
+        let mut search_space = BigUint::one();
         let compiled_string = result.to_string();
-        // let min_max = result.min_max().unwrap().value();
-        let _ = result.dfs(&mut callstack);
+        let _ = result.dfs(&mut callstack, &mut search_space);
 
         Ok(Self {
             compiled_string,
             callstack,
-            // min_max,
+            search_space,
         })
     }
 
@@ -1086,6 +1110,10 @@ impl Grammar {
             time_taken: start_time.elapsed(),
             details,
         })
+    }
+
+    pub(crate) fn search_space(&self) -> &BigUint {
+        &self.search_space
     }
 }
 

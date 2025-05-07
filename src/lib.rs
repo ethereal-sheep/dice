@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use num_bigint::BigUint;
+
 use crate::inner::grammar::{Grammar, GrammarError};
 
 #[derive(Debug, Clone)]
@@ -165,6 +167,10 @@ impl Dice {
         Ok(Self {
             grammar: Grammar::parse(input)?,
         })
+    }
+
+    pub fn search_space(&self) -> &BigUint {
+        self.grammar.search_space()
     }
 
     pub fn roll(&self, rng: &mut impl rand::Rng, options: RollOptions) -> ExecResultWithDetails {

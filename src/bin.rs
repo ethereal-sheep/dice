@@ -4,6 +4,7 @@ use std::{cmp::Ordering, rc::Rc};
 
 use clap::{arg, command, value_parser, Command};
 use dice::{Dice, ExecOutput, RollOptions, TestOptions};
+use num_bigint::BigUint;
 use owo_colors::OwoColorize;
 use rand::{rngs::SmallRng, SeedableRng};
 
@@ -281,6 +282,14 @@ pub fn main() {
                             "test of size",
                             test_size.bold().bright_yellow()
                         );
+                        eprintln!(
+                            "{:>start_width$} {:<middle_width$} => {}",
+                            "",
+                            "search space",
+                            big_uint_to_scientific(dice.search_space(), None, None)
+                                .bold()
+                                .bright_yellow()
+                        );
                     }
 
                     let options = TestOptions {
@@ -543,6 +552,27 @@ fn progress_string(progress_size: f64, interval_count: usize, progress_value: f6
         "{:█<bottom_interval_count$}{}{:<top_interval_count$}",
         "", character, ""
     )
+}
+
+fn big_uint_to_scientific(
+    value: &BigUint,
+    limit: Option<usize>,
+    precision: Option<usize>,
+) -> String {
+    let mut value_str = value.to_str_radix(10);
+    let exp = value_str.len() - 1;
+
+    if exp < limit.unwrap_or(9) {
+        return value_str;
+    }
+
+    let trimmed = value_str.trim_end_matches('0');
+    let precision = precision.unwrap_or(3).min(trimmed.len());
+
+    value_str.truncate(precision + 2); // 1 (for leading) + 1 (for rounding)
+    let value = value_str.parse::<u64>().unwrap() as f64 / 10f64.powf((precision + 1) as f64);
+
+    format!("{:.precision$}e+{}", value, exp)
 }
 
 struct Logo;

@@ -87,6 +87,8 @@ pub struct OperationTestInfo<'a> {
     operation_index: usize,
     iteration_index: usize,
     test_size: usize,
+    step_count: usize,
+    operation_output_size: usize,
     start_time: Instant,
 }
 
@@ -103,6 +105,12 @@ impl<'a> OperationTestInfo<'a> {
     pub fn iteration_index(&self) -> usize {
         self.iteration_index
     }
+    pub fn step_count(&self) -> usize {
+        self.step_count
+    }
+    pub fn operation_output_size(&self) -> usize {
+        self.operation_output_size
+    }
     pub fn start_time(&self) -> Instant {
         self.start_time
     }
@@ -117,6 +125,7 @@ impl<'a> OperationTestInfo<'a> {
 pub struct OverallTestInfo<'a> {
     operation_test_info: OperationTestInfo<'a>,
     operations_count: usize,
+    total_step_count: usize,
     start_time: Instant,
 }
 
@@ -126,6 +135,9 @@ impl<'a> OverallTestInfo<'a> {
     }
     pub fn operations_count(&self) -> usize {
         self.operations_count
+    }
+    pub fn total_step_count(&self) -> usize {
+        self.total_step_count
     }
     pub fn test_size(&self) -> usize {
         self.operation_test_info.test_size
@@ -171,6 +183,10 @@ impl Dice {
 
     pub fn search_space(&self) -> &BigUint {
         self.grammar.search_space()
+    }
+
+    pub fn step_count(&self) -> usize {
+        self.grammar.step_count()
     }
 
     pub fn roll(&self, rng: &mut impl rand::Rng, options: RollOptions) -> ExecResultWithDetails {

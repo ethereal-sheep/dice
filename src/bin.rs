@@ -117,12 +117,6 @@ pub fn main() {
                             "Compiled".bold().yellow(),
                             dice.bright_magenta()
                         );
-                        // println!(
-                        //     "{:>start_width$} {}..{}",
-                        //     "Range".bold().bright_cyan(),
-                        //     dice.min(),
-                        //     dice.max()
-                        // );
                     }
                     let seed = matches.get_one::<u64>("seed");
                     let mut rng: SmallRng = if let Some(seed) = seed {
@@ -290,6 +284,12 @@ pub fn main() {
                                 .bold()
                                 .bright_yellow()
                         );
+                        eprintln!(
+                            "{:>start_width$} {:<middle_width$} => {}",
+                            "",
+                            "step count",
+                            dice.step_count().bold().bright_yellow()
+                        );
                     }
 
                     let options = TestOptions {
@@ -322,12 +322,13 @@ pub fn main() {
                                     let percent =
                                         (info.current_test_info().iteration_index() / interval) + 1;
                                     eprint!(
-                                        "\x1b[2K\r{message} {}▏{percent}%",
+                                        "\x1b[2K\r{message} {}▏{percent:>2}% | ~{} steps ",
                                         progress_string(
                                             info.test_size() as f64,
                                             20,
                                             info.current_test_info().iteration_index() as f64
                                         ),
+                                        info.current_test_info().step_count()
                                     );
                                 } else {
                                     let interval = if info.total_test_count() < 100 {
@@ -337,7 +338,7 @@ pub fn main() {
                                     };
                                     let percent = info.total_test_index() / interval + 1;
                                     eprint!(
-                                    "\x1b[2K\r{:>start_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s",
+                                    "\x1b[2K\r{:>start_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s ",
                                     "Testing".bold().bright_cyan(),
                                     info.current_test_info().operation_name().bright_magenta(),
                                     progress_string(info.total_test_count() as f64, 20, info.total_test_index() as f64),
@@ -349,8 +350,9 @@ pub fn main() {
                             if info.current_test_info().is_last() {
                                 if let Some(message) = &debug_message {
                                     eprintln!(
-                                        "\x1b[2K\r{message} {:<5}ms",
-                                        info.current_test_info().start_time().elapsed().as_millis()
+                                        "\x1b[2K\r{message} {:<5}ms | ~{} steps ",
+                                        info.current_test_info().start_time().elapsed().as_millis(),
+                                        info.current_test_info().step_count()
                                     );
                                 }
                             }
@@ -365,6 +367,16 @@ pub fn main() {
                                     "",
                                     info.start_time().elapsed().as_secs_f32().bold()
                                 );
+
+                                if is_debug {
+                                    eprintln!(
+                                        "{:>start_width$} {:<middle_width$} => {:<5}ns",
+                                        "",
+                                        "avg. step time",
+                                        info.start_time().elapsed().as_nanos()
+                                            / (info.total_step_count() * test_size) as u128
+                                    );
+                                }
                             }
                         })),
                     };

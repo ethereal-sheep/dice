@@ -52,6 +52,14 @@ fn factorial(n: u64) -> BigUint {
     }
 }
 
+fn range_to_vi(lhs: i64, rhs: i64) -> Vec<i64> {
+    if lhs < rhs {
+        (lhs..=rhs).collect()
+    } else {
+        (rhs..=lhs).rev().collect()
+    }
+}
+
 impl ExecOutput {
     pub fn value(&self) -> i64 {
         match self {
@@ -64,6 +72,13 @@ impl ExecOutput {
         match self {
             ExecOutput::Value(n) => Err(format!("Expected array, but got Value({}) instead", n)),
             ExecOutput::Array(vec) => Ok(vec.clone()),
+        }
+    }
+
+    pub fn into_array(&self) -> Vec<i64> {
+        match self {
+            ExecOutput::Value(n) => vec![*n],
+            ExecOutput::Array(vec) => vec.clone(),
         }
     }
 
@@ -276,7 +291,7 @@ pub(crate) enum GrammarRule {
     Select {
         name: &'static str,
         lhs: Box<GrammarRule>,
-        rhs: Box<GrammarRule>,
+        rhs: Vec<i64>,
     },
     Generator {
         name: &'static str,
@@ -365,7 +380,7 @@ impl fmt::Display for GrammarRule {
                 write!(f, "{}(", name)?;
                 lhs.fmt(f)?;
                 write!(f, ", ")?;
-                rhs.fmt(f)?;
+                vi_to_string(rhs).fmt(f)?;
                 write!(f, ")")
             }
         }
@@ -532,11 +547,11 @@ impl GrammarRule {
         }
     }
 
-    fn sel(lhs: Self, rhs: Self) -> Self {
+    fn sel(lhs: Self, rhs: Vec<i64>) -> Self {
         Self::Select {
             name: "Sel",
             lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
+            rhs,
         }
     }
 
@@ -1118,11 +1133,7 @@ impl GrammarRule {
     }
 
     fn rge(lhs: i64, rhs: i64) -> Self {
-        let output = if lhs < rhs {
-            (lhs..=rhs).collect::<Vec<_>>()
-        } else {
-            (rhs..=lhs).rev().collect()
-        };
+        let output = range_to_vi(lhs, rhs);
 
         // let possible_values = output.clone();
         // let possible_values_mod = output.clone();
@@ -1456,7 +1467,6 @@ impl GrammarRule {
             GrammarRule::Select { name, lhs, rhs, .. } => {
                 let step_count = rhs.len();
                 let lhs_index = lhs.dfs(callstack, search_space);
-                let rhs_index = rhs.dfs(callstack, search_space);
                 StackFn {
                     name,
                     operation: "(...)|(...)".into(),
@@ -1464,7 +1474,7 @@ impl GrammarRule {
                     output_size: step_count,
                     exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
                         let lhs = &stack.get(lhs_index).unwrap().array()?;
-                        let rhs = &stack.get(rhs_index).unwrap().array()?;
+                        let rhs = rhs.clone();
                         Ok(ExecOutput::Array(
                             rhs.iter()
                                 .map(|i| lhs[i.rem_euclid(lhs.len() as i64) as usize])
@@ -1474,7 +1484,7 @@ impl GrammarRule {
                             name,
                             options
                                 .include_line_details
-                                .then(|| format!("{} | {}", vi_to_string(lhs), vi_to_string(rhs))),
+                                .then(|| format!("{} | {}", vi_to_string(lhs), vi_to_string(&rhs))),
                         ))
                     }),
                 }
@@ -1661,6 +1671,62 @@ fn any(tokenizer: &mut Tokenizer) -> Result<GrammarRule, GrammarError> {
 }
 
 /**
+ * Suffix
+ *    = Integer / Range
+ */
+fn suffix(tokenizer: &mut Tokenizer) -> Result<Vec<i64>, GrammarError> {
+    match tokenizer.peek() {
+        Some(Token::Number(n)) => {
+            tokenizer.next();
+            Ok(vec![n as i64])
+        }
+        Some(Token::Minus) => {
+            tokenizer.next();
+            match tokenizer.peek() {
+                Some(Token::Number(n)) => {
+                    tokenizer.next();
+                    Ok(vec![-(n as i64)])
+                }
+                Some(token) => Err(GrammarError {
+                    error_type: GrammarErrorType::UnexpectedToken {
+                        token,
+                        expected: "Number",
+                    },
+                    error_index: tokenizer.expended_count(),
+                    error_length: tokenizer.peek_token_count(),
+                    input_string: tokenizer.input_str().into(),
+                }),
+                None => Err(GrammarError {
+                    error_type: GrammarErrorType::UnexpectedEnd { expected: "Number" },
+                    error_index: tokenizer.expended_count(),
+                    error_length: 1,
+                    input_string: tokenizer.input_str().into(),
+                }),
+            }
+        }
+        Some(Token::Range(lhs, rhs)) => {
+            tokenizer.next();
+            Ok(range_to_vi(lhs, rhs))
+        }
+        Some(token) => Err(GrammarError {
+            error_type: GrammarErrorType::UnexpectedToken {
+                token,
+                expected: "Suffix",
+            },
+            error_index: tokenizer.expended_count(),
+            error_length: tokenizer.peek_token_count(),
+            input_string: tokenizer.input_str().into(),
+        }),
+        None => Err(GrammarError {
+            error_type: GrammarErrorType::UnexpectedEnd { expected: "Suffix" },
+            error_index: tokenizer.expended_count(),
+            error_length: 1,
+            input_string: tokenizer.input_str().into(),
+        }),
+    }
+}
+
+/**
  * Primary
  *    = Dice / Modifier / Array
  */
@@ -1708,28 +1774,39 @@ fn primary(tokenizer: &mut Tokenizer, expected: &'static str) -> Result<GrammarR
             match tokenizer.peek() {
                 Some(Token::Pipe) => {
                     tokenizer.next();
-                    let rhs = primary(tokenizer, "Array")?;
-                    match tokenizer.peek() {
-                        Some(Token::RightSquareBracket) => {
-                            tokenizer.next();
-                            Ok(GrammarRule::sel(lhs, rhs))
-                        }
-                        Some(token) => Err(GrammarError {
-                            error_type: GrammarErrorType::UnexpectedToken {
-                                token,
-                                expected: "']'",
-                            },
-                            error_index: tokenizer.expended_count(),
-                            error_length: tokenizer.peek_token_count(),
-                            input_string: tokenizer.input_str().into(),
-                        }),
-                        None => Err(GrammarError {
-                            error_type: GrammarErrorType::UnexpectedEnd { expected: "']'" },
-                            error_index: tokenizer.expended_count(),
-                            error_length: 1,
-                            input_string: tokenizer.input_str().into(),
-                        }),
+                    let mut arr: Vec<i64> = Vec::new();
+                    loop {
+                        arr.append(&mut suffix(tokenizer)?);
+                        match tokenizer.peek() {
+                            Some(Token::RightSquareBracket) => {
+                                tokenizer.next();
+                                break;
+                            }
+                            Some(Token::Comma) => tokenizer.next(),
+                            Some(token) => {
+                                return Err(GrammarError {
+                                    error_type: GrammarErrorType::UnexpectedToken {
+                                        token,
+                                        expected: "',' or ']'",
+                                    },
+                                    error_index: tokenizer.expended_count(),
+                                    error_length: tokenizer.peek_token_count(),
+                                    input_string: tokenizer.input_str().into(),
+                                });
+                            }
+                            None => {
+                                return Err(GrammarError {
+                                    error_type: GrammarErrorType::UnexpectedEnd {
+                                        expected: "',' or ']'",
+                                    },
+                                    error_index: tokenizer.expended_count(),
+                                    error_length: 1,
+                                    input_string: tokenizer.input_str().into(),
+                                });
+                            }
+                        };
                     }
+                    Ok(GrammarRule::sel(lhs, arr))
                 }
                 Some(token) => Err(GrammarError {
                     error_type: GrammarErrorType::UnexpectedToken {

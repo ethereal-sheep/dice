@@ -403,7 +403,9 @@ pub fn main() {
                             let percentiles = Percentiles::from_data(result.output).unwrap();
                             percentiles.print_table(start_width, reference, is_debug);
                         }
-                        Err(err) => println!("{:>start_width$} {}", "Error".red().bold(), err),
+                        Err(err) => {
+                            eprintln!("\n{:>start_width$} {}", "Error".red().bold(), err);
+                        }
                     }
                 }
                 Err(err) => {
@@ -443,6 +445,7 @@ pub fn main() {
                             "An integer value that *MUST* be provided by the user."
                         ),
                         Content::subheader("COUNT?", "An unsigned NUM that defaults to 1 if omitted."),
+                        Content::subheader("INDICES", "One or more VAL or RANGE, COMMA delimited"),
                     ]
                 ),
                 (
@@ -529,6 +532,17 @@ pub fn main() {
                         Content::subheader(
                             "Desc.",
                             "From an array of values, select, without replacement, COUNT \nvalues and returns a containing array."
+                        ),
+                    ]
+                ),
+                (
+                    "SELECT",
+                    &[
+                        Content::subheader("Usage", "[<ARR>|<INDICES>] => ARR"),
+                        Content::subheader("Example", "[10d6|1,3..6]"),
+                        Content::subheader(
+                            "Desc.",
+                            "From an array of values I, construct a new array O of size \nsizeOf(INDICES), where O[i] = I[INDICES[i] mod sizeOf(I)]",
                         ),
                     ]
                 ),

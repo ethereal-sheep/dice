@@ -490,6 +490,10 @@ pub fn main() {
                             "Desc.",
                             "Creates an array of values from START to END inclusively."
                         ),
+                        Content::subheader(
+                            "NOTE",
+                            "Ranges used in a declared ARR or INDICES will be split into\nits components, i.e. (0,1..4,5) => (0,1,2,3,4,5)"
+                        ),
                     ]
                 ),
                 (

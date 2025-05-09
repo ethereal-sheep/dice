@@ -207,6 +207,14 @@ pub(crate) enum MinMaxOutput {
 type MinMaxResult = Result<MinMaxOutput, String>;
 
 impl MinMaxOutput {
+    pub(crate) fn size(&self) -> usize {
+        match self {
+            MinMaxOutput::Value(_) => 1,
+            MinMaxOutput::Array(items) => items.len(),
+            MinMaxOutput::Permutation(_, suffix) => suffix.len(),
+        }
+    }
+
     pub(crate) fn value(&self) -> MinMax {
         self.array()
             .into_iter()
@@ -1235,7 +1243,21 @@ fn primary(tokenizer: &mut Tokenizer, expected: &'static str) -> Result<GrammarR
             tokenizer.next();
             let mut arr: Vec<GrammarRule> = Vec::new();
             loop {
-                arr.push(expression(tokenizer)?);
+                if let Some(Token::Range(lhs, rhs)) = tokenizer.peek() {
+                    tokenizer.next();
+                    arr.append(
+                        &mut range_to_vi(lhs, rhs)
+                            .into_iter()
+                            .map(|i| {
+                                (i < 0)
+                                    .then(|| GrammarRule::neg(GrammarRule::num(i.abs() as u64)))
+                                    .unwrap_or_else(|| GrammarRule::num(i as u64))
+                            })
+                            .collect(),
+                    );
+                } else {
+                    arr.push(expression(tokenizer)?);
+                }
                 match tokenizer.peek() {
                     Some(Token::RightParenthesis) => {
                         tokenizer.next();
@@ -1420,6 +1442,7 @@ pub(crate) struct Grammar {
     compiled_string: String,
     callstack: Vec<StackFn>,
     search_space: BigUint,
+    output_size: usize,
     min_max: MinMax,
 }
 
@@ -1439,14 +1462,15 @@ impl Grammar {
         let mut callstack: Vec<StackFn> = vec![];
         let mut search_space = BigUint::one();
         let compiled_string = result.to_string();
-        let min_max = result.min_max().unwrap().value();
+        let min_max_output = result.min_max().unwrap();
         let _ = result.dfs(&mut callstack, &mut search_space);
 
         Ok(Self {
             compiled_string,
             callstack,
             search_space,
-            min_max,
+            output_size: min_max_output.size(),
+            min_max: min_max_output.value(),
         })
     }
 
@@ -1456,6 +1480,10 @@ impl Grammar {
 
     pub(crate) fn max(&self) -> i64 {
         self.min_max.max
+    }
+
+    pub(crate) fn output_size(&self) -> usize {
+        self.output_size
     }
 
     pub(crate) fn exec(
@@ -1652,6 +1680,27 @@ mod tests {
                 input_string: _,
             })
         );
+    }
+
+    #[test]
+    fn test_inline_range_in_array() {
+        let x = "(0, 1..3, 4)";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.output_size(), 5);
+
+        let x = "3p1..3";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.output_size(), 3);
+    }
+
+    #[test]
+    fn test_inline_range_in_select_suffix() {
+        let x = "[(1,2,3)|0, 1..3, -4]";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.output_size(), 5);
     }
 
     #[test]

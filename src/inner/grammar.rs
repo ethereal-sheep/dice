@@ -5,6 +5,7 @@ use crate::{
     TestResultWithDetails,
 };
 use core::fmt;
+use either::Either;
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, One};
 use owo_colors::OwoColorize;
@@ -377,7 +378,7 @@ pub(crate) enum GrammarRule {
 impl fmt::Display for GrammarRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if f.alternate() {
-            if let Some(output) = self.consteval(0) {
+            if let Some(output) = self.consteval() {
                 return output.fmt(f);
             }
         }
@@ -877,18 +878,18 @@ impl GrammarRule {
         }
     }
 
-    fn consteval(&self, depth: usize) -> Option<ExecOutput> {
+    fn consteval(&self) -> Option<ExecOutput> {
         match self {
             GrammarRule::Aggregate { children, .. } => {
                 let v = children
                     .iter()
-                    .map_while(|c| c.consteval(depth + 1).map(|o| o.value()))
+                    .map_while(|c| c.consteval().map(|o| o.value()))
                     .collect::<Vec<_>>();
                 (v.len() == children.len()).then_some(ExecOutput::Array(v))
             }
-            GrammarRule::Number { number, .. } => (depth > 0).then_some(ExecOutput::Value(*number)),
+            GrammarRule::Number { number, .. } => Some(ExecOutput::Value(*number)),
             GrammarRule::Select { lhs, rhs, .. } => lhs
-                .consteval(depth + 1)
+                .consteval()
                 .and_then(|o| o.expect_array().ok())
                 .map(|o| ExecOutput::Array(select_suffix(&o, rhs))),
             GrammarRule::Generator { exec, .. } => match exec {
@@ -896,21 +897,17 @@ impl GrammarRule {
                 _ => None,
             },
             GrammarRule::UnaryNumber { child, exec, .. } => match exec {
-                ExecFn::Constant(exec) => exec(child.consteval(depth + 1)?.value()).ok(),
+                ExecFn::Constant(exec) => exec(child.consteval()?.value()).ok(),
                 _ => None,
             },
             GrammarRule::UnaryArray { child, exec, .. } => match exec {
-                ExecFn::Constant(exec) => {
-                    exec(&child.consteval(depth + 1)?.expect_array().ok()?).ok()
-                }
+                ExecFn::Constant(exec) => exec(&child.consteval()?.expect_array().ok()?).ok(),
                 _ => None,
             },
             GrammarRule::Binary { lhs, rhs, exec, .. } => match exec {
-                ExecFn::Constant(exec) => exec(
-                    lhs.consteval(depth + 1)?.value(),
-                    rhs.consteval(depth + 1)?.value(),
-                )
-                .ok(),
+                ExecFn::Constant(exec) => {
+                    exec(lhs.consteval()?.value(), rhs.consteval()?.value()).ok()
+                }
                 _ => None,
             },
         }
@@ -921,243 +918,269 @@ impl GrammarRule {
         callstack: &mut Vec<StackFn>,
         compiled_constants: &mut Vec<CompiledConstant>,
         search_space: &mut BigUint,
-    ) -> usize {
-        let f = if let Some(output) = self.consteval(0) {
-            compiled_constants.push(CompiledConstant {
-                operation: self.to_string(),
-                output: output.to_string(),
-            });
-            StackFn {
-                name: "Pre",
-                operation: "compiled".into(),
-                step_count: 1,
-                output_size: output.array().len(),
-                exec: Rc::new(move |_: &Vec<ExecOutput>, _, _| {
-                    Ok(output.clone().with_line_detail("Pre", None))
-                }),
-            }
-        } else {
+    ) -> Either<usize, ExecOutput> {
+        if let Some(output) = self.consteval() {
             match self {
-                GrammarRule::Aggregate { name, children } => {
-                    let step_count = children.len();
-                    let indices: Vec<usize> = children
-                        .into_iter()
-                        .map(|child| child.compile(callstack, compiled_constants, search_space))
-                        .collect();
-                    StackFn {
-                        name,
-                        operation: "Aggregate".into(),
-                        step_count,
-                        output_size: 1,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, _| {
-                            Ok(ExecOutput::Array(
-                                indices
-                                    .iter()
-                                    .map(|i| stack.get(*i).unwrap().value())
-                                    .collect(),
-                            )
-                            .with_line_detail(name, None))
-                        }),
-                    }
+                GrammarRule::Number { .. } => (),
+                _ => {
+                    compiled_constants.push(CompiledConstant {
+                        operation: self.to_string(),
+                        output: output.to_string(),
+                    });
                 }
-                GrammarRule::Number { name, number } => StackFn {
+            }
+            return Either::Right(output);
+        };
+
+        let f = match self {
+            GrammarRule::Aggregate { name, children } => {
+                let step_count = children.len();
+                let indices = children
+                    .into_iter()
+                    .map(|child| child.compile(callstack, compiled_constants, search_space))
+                    .collect::<Vec<_>>();
+                StackFn {
                     name,
-                    operation: format!("{}", number),
-                    step_count: 1,
+                    operation: "Aggregate".into(),
+                    step_count,
                     output_size: 1,
-                    exec: Rc::new(move |_: &Vec<ExecOutput>, _, _| {
-                        Ok(ExecOutput::Value(number).with_line_detail(name, None))
+                    exec: Rc::new(move |stack: &Vec<ExecOutput>, _, _| {
+                        Ok(ExecOutput::Array(
+                            indices
+                                .iter()
+                                .map(|e| {
+                                    e.as_ref().right_or_else(|i| stack.get(*i).unwrap()).value()
+                                })
+                                .collect(),
+                        )
+                        .with_line_detail(name, None))
                     }),
-                },
-                GrammarRule::Generator {
-                    name,
-                    exec,
-                    to_string,
-                    search_space_size,
-                    step_count,
-                    size,
-                    ..
-                } => {
-                    *search_space *= search_space_size;
-                    match exec {
-                        ExecFn::Random(_, exec) => StackFn {
-                            name,
-                            operation: (to_string)(),
-                            step_count,
-                            output_size: size,
-                            exec: Rc::new(move |_: &Vec<ExecOutput>, rng, options| {
-                                Ok(exec(rng)?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(&to_string),
-                                ))
-                            }),
-                        },
-                        ExecFn::Constant(exec) => StackFn {
-                            name,
-                            operation: (to_string)(),
-                            step_count,
-                            output_size: size,
-                            exec: Rc::new(move |_: &Vec<ExecOutput>, _, options| {
-                                Ok(exec()?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(&to_string),
-                                ))
-                            }),
-                        },
-                    }
                 }
-                GrammarRule::UnaryNumber {
-                    name,
-                    operation,
-                    child,
-                    exec,
-                    to_string,
-                    size,
-                    ..
-                } => {
-                    let index = child.compile(callstack, compiled_constants, search_space);
-                    match exec {
-                        ExecFn::Random(_, exec) => StackFn {
-                            name,
-                            operation,
-                            step_count: 1,
-                            output_size: size,
-                            exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                                let rhs = stack.get(index).unwrap().value();
-                                Ok(exec(rhs, rng)?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(|| to_string(rhs)),
-                                ))
-                            }),
-                        },
-                        ExecFn::Constant(exec) => StackFn {
-                            name,
-                            operation,
-                            step_count: 1,
-                            output_size: size,
-                            exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
-                                let rhs = stack.get(index).unwrap().value();
-                                Ok(exec(rhs)?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(|| to_string(rhs)),
-                                ))
-                            }),
-                        },
-                    }
-                }
-                GrammarRule::UnaryArray {
-                    name,
-                    operation,
-                    child,
-                    exec,
-                    to_string,
-                    search_space_size,
-                    step_count,
-                    size,
-                    ..
-                } => {
-                    *search_space *= search_space_size;
-                    let index = child.compile(callstack, compiled_constants, search_space);
-                    match exec {
-                        ExecFn::Random(_, exec) => StackFn {
-                            name,
-                            operation,
-                            step_count,
-                            output_size: size,
-                            exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                                let v = &stack.get(index).unwrap().expect_array()?;
-                                Ok(exec(v, rng)?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(|| to_string(v)),
-                                ))
-                            }),
-                        },
-                        ExecFn::Constant(exec) => StackFn {
-                            name,
-                            operation,
-                            step_count,
-                            output_size: size,
-                            exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
-                                let v = &stack.get(index).unwrap().expect_array()?;
-                                Ok(exec(v)?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(|| to_string(v)),
-                                ))
-                            }),
-                        },
-                    }
-                }
-                GrammarRule::Select { name, lhs, rhs, .. } => {
-                    let step_count = rhs.len();
-                    let lhs_index = lhs.compile(callstack, compiled_constants, search_space);
-                    StackFn {
+            }
+            GrammarRule::Number { name, number } => StackFn {
+                name,
+                operation: format!("{}", number),
+                step_count: 1,
+                output_size: 1,
+                exec: Rc::new(move |_: &Vec<ExecOutput>, _, _| {
+                    Ok(ExecOutput::Value(number).with_line_detail(name, None))
+                }),
+            },
+            GrammarRule::Generator {
+                name,
+                exec,
+                to_string,
+                search_space_size,
+                step_count,
+                size,
+                ..
+            } => {
+                *search_space *= search_space_size;
+                match exec {
+                    ExecFn::Random(_, exec) => StackFn {
                         name,
-                        operation: "(...)|(...)".into(),
+                        operation: (to_string)(),
                         step_count,
-                        output_size: step_count,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
-                            let lhs = &stack.get(lhs_index).unwrap().expect_array()?;
-                            let rhs = rhs.clone();
-                            Ok(
-                                ExecOutput::Array(select_suffix(lhs, &rhs)).with_line_detail(
-                                    name,
-                                    options.include_line_details.then(|| {
-                                        format!("{} | {}", vi_to_string(lhs), vi_to_string(&rhs))
-                                    }),
-                                ),
-                            )
+                        output_size: size,
+                        exec: Rc::new(move |_: &Vec<ExecOutput>, rng, options| {
+                            Ok(exec(rng)?.with_line_detail(
+                                name,
+                                options.include_line_details.then(&to_string),
+                            ))
                         }),
-                    }
+                    },
+                    ExecFn::Constant(exec) => StackFn {
+                        name,
+                        operation: (to_string)(),
+                        step_count,
+                        output_size: size,
+                        exec: Rc::new(move |_: &Vec<ExecOutput>, _, options| {
+                            Ok(exec()?.with_line_detail(
+                                name,
+                                options.include_line_details.then(&to_string),
+                            ))
+                        }),
+                    },
                 }
-                GrammarRule::Binary {
+            }
+            GrammarRule::UnaryNumber {
+                name,
+                operation,
+                child,
+                exec,
+                to_string,
+                size,
+                ..
+            } => {
+                let either = child.compile(callstack, compiled_constants, search_space);
+                match exec {
+                    ExecFn::Random(_, exec) => StackFn {
+                        name,
+                        operation,
+                        step_count: 1,
+                        output_size: size,
+                        exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
+                            let rhs = either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .value();
+                            Ok(exec(rhs, rng)?.with_line_detail(
+                                name,
+                                options.include_line_details.then(|| to_string(rhs)),
+                            ))
+                        }),
+                    },
+                    ExecFn::Constant(exec) => StackFn {
+                        name,
+                        operation,
+                        step_count: 1,
+                        output_size: size,
+                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                            let rhs = either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .value();
+                            Ok(exec(rhs)?.with_line_detail(
+                                name,
+                                options.include_line_details.then(|| to_string(rhs)),
+                            ))
+                        }),
+                    },
+                }
+            }
+            GrammarRule::UnaryArray {
+                name,
+                operation,
+                child,
+                exec,
+                to_string,
+                search_space_size,
+                step_count,
+                size,
+                ..
+            } => {
+                *search_space *= search_space_size;
+                let either = child.compile(callstack, compiled_constants, search_space);
+                match exec {
+                    ExecFn::Random(_, exec) => StackFn {
+                        name,
+                        operation,
+                        step_count,
+                        output_size: size,
+                        exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
+                            let v = &either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .expect_array()?;
+                            Ok(exec(v, rng)?.with_line_detail(
+                                name,
+                                options.include_line_details.then(|| to_string(v)),
+                            ))
+                        }),
+                    },
+                    ExecFn::Constant(exec) => StackFn {
+                        name,
+                        operation,
+                        step_count,
+                        output_size: size,
+                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                            let v = &either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .expect_array()?;
+                            Ok(exec(v)?.with_line_detail(
+                                name,
+                                options.include_line_details.then(|| to_string(v)),
+                            ))
+                        }),
+                    },
+                }
+            }
+            GrammarRule::Select { name, lhs, rhs, .. } => {
+                let step_count = rhs.len();
+                let either = lhs.compile(callstack, compiled_constants, search_space);
+                StackFn {
                     name,
-                    operation,
-                    lhs,
-                    rhs,
-                    exec,
-                    to_string,
-                    size,
-                    ..
-                } => {
-                    let lhs_index = lhs.compile(callstack, compiled_constants, search_space);
-                    let rhs_index = rhs.compile(callstack, compiled_constants, search_space);
-                    match exec {
-                        ExecFn::Random(_, exec) => StackFn {
-                            name,
-                            operation,
-                            step_count: 1,
-                            output_size: size,
-                            exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
-                                let lhs = stack.get(lhs_index).unwrap().value();
-                                let rhs = stack.get(rhs_index).unwrap().value();
-                                Ok(exec(lhs, rhs, rng)?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(|| to_string(lhs, rhs)),
-                                ))
-                            }),
-                        },
-                        ExecFn::Constant(exec) => StackFn {
-                            name,
-                            operation,
-                            step_count: 1,
-                            output_size: size,
-                            exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
-                                let lhs = stack.get(lhs_index).unwrap().value();
-                                let rhs = stack.get(rhs_index).unwrap().value();
-                                Ok(exec(lhs, rhs)?.with_line_detail(
-                                    name,
-                                    options.include_line_details.then(|| to_string(lhs, rhs)),
-                                ))
-                            }),
-                        },
-                    }
+                    operation: "(...)|(...)".into(),
+                    step_count,
+                    output_size: step_count,
+                    exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                        let lhs = &either
+                            .as_ref()
+                            .right_or_else(|i| stack.get(*i).unwrap())
+                            .expect_array()?;
+                        let rhs = rhs.clone();
+                        Ok(
+                            ExecOutput::Array(select_suffix(lhs, &rhs)).with_line_detail(
+                                name,
+                                options.include_line_details.then(|| {
+                                    format!("{} | {}", vi_to_string(lhs), vi_to_string(&rhs))
+                                }),
+                            ),
+                        )
+                    }),
+                }
+            }
+            GrammarRule::Binary {
+                name,
+                operation,
+                lhs,
+                rhs,
+                exec,
+                to_string,
+                size,
+                ..
+            } => {
+                let left_either = lhs.compile(callstack, compiled_constants, search_space);
+                let right_either = rhs.compile(callstack, compiled_constants, search_space);
+                match exec {
+                    ExecFn::Random(_, exec) => StackFn {
+                        name,
+                        operation,
+                        step_count: 1,
+                        output_size: size,
+                        exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
+                            let lhs = left_either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .value();
+                            let rhs = right_either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .value();
+                            Ok(exec(lhs, rhs, rng)?.with_line_detail(
+                                name,
+                                options.include_line_details.then(|| to_string(lhs, rhs)),
+                            ))
+                        }),
+                    },
+                    ExecFn::Constant(exec) => StackFn {
+                        name,
+                        operation,
+                        step_count: 1,
+                        output_size: size,
+                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                            let lhs = left_either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .value();
+                            let rhs = right_either
+                                .as_ref()
+                                .right_or_else(|i| stack.get(*i).unwrap())
+                                .value();
+                            Ok(exec(lhs, rhs)?.with_line_detail(
+                                name,
+                                options.include_line_details.then(|| to_string(lhs, rhs)),
+                            ))
+                        }),
+                    },
                 }
             }
         };
 
         let n = callstack.len();
         callstack.push(f);
-        n
+        Either::Left(n)
     }
 }
 
@@ -1952,18 +1975,18 @@ mod tests {
         let x = "3d20";
         let rule = parse(x);
         assert_eq!(rule.variable_count(), 3);
-        assert!(rule.consteval(0).is_none());
+        assert!(rule.consteval().is_none());
 
         let x = "1 + 2";
         let rule = parse(x);
         assert_eq!(rule.variable_count(), 0);
-        assert!(rule.consteval(0).is_some());
-        assert_eq!(rule.consteval(0).unwrap().value(), 3);
+        assert!(rule.consteval().is_some());
+        assert_eq!(rule.consteval().unwrap().value(), 3);
 
         let x = "[[1..3|1,2,3]|0,0,0] + 1";
         let rule = parse(x);
         assert_eq!(rule.variable_count(), 0);
-        assert!(rule.consteval(0).is_some());
-        assert_eq!(rule.consteval(0).unwrap().value(), 7);
+        assert!(rule.consteval().is_some());
+        assert_eq!(rule.consteval().unwrap().value(), 7);
     }
 }

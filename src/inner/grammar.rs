@@ -312,18 +312,6 @@ macro_rules! to_string_fn {
     };
 }
 
-// macro_rules! possible_values_mod_fn {
-//     () => {
-//         Box<dyn Fn(&Self, usize) -> Vec<Vec<usize>>>
-//     };
-// }
-
-// macro_rules! possible_values_fn {
-//     () => {
-//         Box<dyn Fn(&Self) -> Vec<Vec<i64>>>
-//     };
-// }
-
 pub(crate) enum GrammarRule {
     Aggregate {
         name: &'static str,

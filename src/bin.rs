@@ -285,10 +285,17 @@ pub fn main() {
                                 .bright_yellow()
                         );
                         eprintln!(
-                            "{:>start_width$} {:<middle_width$} => {}",
+                            "{:>start_width$} {:<middle_width$} => ~{}",
                             "",
                             "step count",
                             dice.step_count().bold().bright_yellow()
+                        );
+                        println!(
+                            "{:>start_width$} {:<middle_width$} => {}..{}",
+                            "",
+                            "min-max range",
+                            dice.min().bold().bright_yellow(),
+                            dice.max().bold().bright_yellow()
                         );
                     }
 
@@ -392,7 +399,8 @@ pub fn main() {
                                 );
                             }
                             let reference = matches.get_one("reference").copied();
-                            let buckets = Buckets::from_data(&result.output);
+                            let mut buckets = Buckets::from_range(dice.min(), dice.max());
+                            buckets.fill(&result.output);
                             buckets.print_histogram(
                                 start_width,
                                 *matches.get_one::<u64>("height").unwrap_or(&10) as usize,

@@ -15,6 +15,12 @@ use num_bigint::BigUint;
 use crate::inner::grammar::{Grammar, GrammarError};
 
 #[derive(Debug, Clone)]
+pub struct CompiledConstant {
+    pub operation: String,
+    pub output: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum ExecOutput {
     Value(i64),
     Array(Vec<i64>),
@@ -199,6 +205,10 @@ impl Dice {
 
     pub fn variable_count(&self) -> usize {
         self.grammar.variable_count()
+    }
+
+    pub fn compiled_constants(&self) -> &[CompiledConstant] {
+        self.grammar.compiled_constants()
     }
 
     pub fn roll(&self, rng: &mut impl rand::Rng, options: RollOptions) -> ExecResultWithDetails {

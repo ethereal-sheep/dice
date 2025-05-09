@@ -228,7 +228,7 @@ pub fn main() {
                         *n as usize
                     } else {
                         if is_debug {
-                            println!(
+                            eprintln!(
                                 "{:>start_width$} defaulting test size to {}",
                                 "Notice".bold().bright_green(),
                                 100000.bold().bright_yellow(),
@@ -238,7 +238,25 @@ pub fn main() {
                     };
 
                     if is_debug {
-                        println!(
+                        let constants_size = dice.compiled_constants().len();
+                        if constants_size > 0 {
+                            eprintln!(
+                                "{:>start_width$} {} {}{}",
+                                "Optimizing".bold().bright_cyan(),
+                                dice.compiled_constants().len().bold().bright_yellow(),
+                                "constant",
+                                if constants_size == 1 { ' ' } else { 's' }
+                            );
+                            for (i, constant) in dice.compiled_constants().iter().enumerate() {
+                                eprintln!(
+                                    "{:>start_width$} {} => {}",
+                                    (i + 1).blue().bold(),
+                                    constant.operation,
+                                    constant.output.bold().yellow()
+                                );
+                            }
+                        }
+                        eprintln!(
                             "{:>start_width$} {}",
                             "Compiled".bold().yellow(),
                             dice.bright_magenta()
@@ -1025,14 +1043,15 @@ impl Buckets {
         }
     }
 
-    fn from_data(data: &Vec<i64>) -> Self {
-        let min = data.iter().min().copied().unwrap_or(0);
-        let max = data.iter().max().copied().unwrap_or(0);
+    // #[deprecated]
+    // fn from_data(data: &Vec<i64>) -> Self {
+    //     let min = data.iter().min().copied().unwrap_or(0);
+    //     let max = data.iter().max().copied().unwrap_or(0);
 
-        let mut buckets = Buckets::from_range(min, max);
-        buckets.fill(data);
-        buckets
-    }
+    //     let mut buckets = Buckets::from_range(min, max);
+    //     buckets.fill(data);
+    //     buckets
+    // }
 
     fn fill(&mut self, data: &Vec<i64>) {
         for num in data {

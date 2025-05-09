@@ -339,8 +339,6 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(),
         to_string: to_string_fn!(),
         min_max: min_max_fn!(),
-        // possible_values: possible_values_fn!(),
-        // possible_values_mod: possible_values_mod_fn!(),
     },
     UnaryNumber {
         name: &'static str,
@@ -350,8 +348,6 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(i64),
         to_string: to_string_fn!(i64),
         min_max: min_max_fn!(MinMax),
-        // possible_values: possible_values_fn!(),
-        // possible_values_mod: possible_values_mod_fn!(),
     },
     UnaryArray {
         name: &'static str,
@@ -364,8 +360,6 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(&Vec<i64>),
         to_string: to_string_fn!(&Vec<i64>),
         min_max: min_max_fn!(&Vec<MinMax>),
-        // possible_values: possible_values_fn!(),
-        // possible_values_mod: possible_values_mod_fn!(),
     },
     Binary {
         name: &'static str,
@@ -376,8 +370,6 @@ pub(crate) enum GrammarRule {
         exec: exec_fn!(i64, i64),
         to_string: to_string_fn!(i64, i64),
         min_max: min_max_fn!(MinMax, MinMax),
-        // possible_values: possible_values_fn!(),
-        // possible_values_mod: possible_values_mod_fn!(),
     },
 }
 
@@ -448,127 +440,6 @@ impl fmt::Debug for StackFn {
     }
 }
 
-// fn sum_possible_values_mod(possible_values: &Vec<Vec<usize>>, modulo: usize) -> Vec<usize> {
-//     let mut set = HashSet::new();
-//     set.insert(0);
-//     for child in possible_values.iter() {
-//         let mut new_sums = HashSet::new();
-//         for value in child.iter().map(|i| i.rem_euclid(modulo)) {
-//             for s in set.iter() {
-//                 new_sums.insert((s + value).rem_euclid(modulo));
-//             }
-//         }
-//         set = new_sums;
-//     }
-//     let mut v: Vec<usize> = set.iter().cloned().collect();
-//     v.sort();
-//     v
-// }
-
-// fn sum_possible_values(possible_values: &Vec<Vec<i64>>) -> Vec<i64> {
-//     let mut set = HashSet::new();
-//     set.insert(0);
-//     for child in possible_values.iter() {
-//         let mut new_sums = HashSet::new();
-//         for value in child.iter().cloned() {
-//             for s in set.iter() {
-//                 new_sums.insert(s + value);
-//             }
-//         }
-//         set = new_sums;
-//     }
-//     let mut v: Vec<i64> = set.iter().cloned().collect();
-//     v.sort();
-//     v
-// }
-
-// fn mul_possible_values_mod(possible_values: &Vec<Vec<usize>>, modulo: usize) -> Vec<usize> {
-//     let mut set = HashSet::new();
-//     set.insert(1);
-//     for child in possible_values.iter() {
-//         let mut new_muls = HashSet::new();
-//         for value in child.iter().map(|i| i.rem_euclid(modulo)) {
-//             for s in set.iter() {
-//                 new_muls.insert((s * value).rem_euclid(modulo));
-//             }
-//         }
-//         set = new_muls;
-//     }
-//     let mut v: Vec<usize> = set.iter().cloned().collect();
-//     v.sort();
-//     v
-// }
-
-// fn mul_possible_values(possible_values: &Vec<Vec<i64>>) -> Vec<i64> {
-//     let mut set = HashSet::new();
-//     set.insert(0);
-//     for child in possible_values.iter() {
-//         let mut new_sums = HashSet::new();
-//         for value in child.iter().cloned() {
-//             for s in set.iter() {
-//                 new_sums.insert(s * value);
-//             }
-//         }
-//         set = new_sums;
-//     }
-//     let mut v: Vec<i64> = set.iter().cloned().collect();
-//     v.sort();
-//     v
-// }
-
-// fn merge_possible_values_mod(possible_values: &Vec<Vec<usize>>, modulo: usize) -> Vec<usize> {
-//     let mut set = HashSet::new();
-//     for child in possible_values.iter() {
-//         for value in child.iter().map(|i| i.rem_euclid(modulo)) {
-//             set.insert(value);
-//             if set.len() == modulo {
-//                 break;
-//             }
-//         }
-//     }
-//     let mut v: Vec<usize> = set.iter().cloned().collect();
-//     v.sort();
-//     v
-// }
-
-// fn merge_possible_values(possible_values: &Vec<Vec<i64>>) -> Vec<i64> {
-//     let mut set = HashSet::new();
-//     for child in possible_values.iter() {
-//         for value in child.iter().cloned() {
-//             set.insert(value);
-//         }
-//     }
-//     let mut v: Vec<i64> = set.iter().cloned().collect();
-//     v.sort();
-//     v
-// }
-
-// fn possible_values_to_mod(possible_values: &Vec<i64>, modulo: usize) -> Vec<usize> {
-//     let mut set = HashSet::new();
-//     for value in possible_values
-//         .iter()
-//         .map(|i| i.rem_euclid(modulo as i64) as usize)
-//     {
-//         set.insert(value);
-//         if set.len() == modulo {
-//             break;
-//         }
-//     }
-//     let mut v: Vec<_> = set.iter().cloned().collect();
-//     v.sort();
-//     v
-// }
-
-// fn nested_possible_values_to_mod(
-//     possible_values: &Vec<Vec<i64>>,
-//     modulo: usize,
-// ) -> Vec<Vec<usize>> {
-//     possible_values
-//         .iter()
-//         .map(|v| possible_values_to_mod(v, modulo))
-//         .collect()
-// }
-
 impl GrammarRule {
     fn num(num: u64) -> Self {
         Self::Number {
@@ -607,27 +478,6 @@ impl GrammarRule {
                     max: lhs.max + rhs.max,
                 }))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::Binary { lhs, rhs, .. } = something {
-            //         return vec![sum_possible_values(&vec![
-            //             lhs.possible_values(),
-            //             rhs.possible_values(),
-            //         ])];
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::Binary { lhs, rhs, .. } = something {
-            //         return vec![sum_possible_values_mod(
-            //             &vec![
-            //                 lhs.possible_values_mod(modulo),
-            //                 rhs.possible_values_mod(modulo),
-            //             ],
-            //             modulo,
-            //         )];
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -646,35 +496,6 @@ impl GrammarRule {
                     max: lhs.max - rhs.min,
                 }))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::Binary { lhs, rhs, .. } = something {
-            //         return vec![sum_possible_values(&vec![
-            //             lhs.possible_values(),
-            //             rhs.possible_values()
-            //                 .into_iter()
-            //                 .map(|i| -i)
-            //                 .rev()
-            //                 .collect(),
-            //         ])];
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::Binary { lhs, rhs, .. } = something {
-            //         return vec![sum_possible_values_mod(
-            //             &vec![
-            //                 lhs.possible_values_mod(modulo),
-            //                 rhs.possible_values_mod(modulo)
-            //                     .into_iter()
-            //                     .map(|i| -(i as i64).rem_euclid(modulo as i64) as usize)
-            //                     .rev()
-            //                     .collect(),
-            //             ],
-            //             modulo,
-            //         )];
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -700,27 +521,6 @@ impl GrammarRule {
                     max: *possible_values.iter().max().unwrap(),
                 }))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::Binary { lhs, rhs, .. } = something {
-            //         return vec![mul_possible_values(&vec![
-            //             lhs.possible_values(),
-            //             rhs.possible_values(),
-            //         ])];
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::Binary { lhs, rhs, .. } = something {
-            //         return vec![mul_possible_values_mod(
-            //             &vec![
-            //                 lhs.possible_values_mod(modulo),
-            //                 rhs.possible_values_mod(modulo),
-            //             ],
-            //             modulo,
-            //         )];
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -775,58 +575,6 @@ impl GrammarRule {
                         .collect::<_>(),
                 ))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         let v = child.nested_possible_values();
-            //         // for each value, find how many values in other dice it has
-            //         let mut dice: Vec<HashMap<i64, (HashSet<usize>, HashSet<usize>)>> =
-            //             vec![HashMap::new(); v.len()];
-            //         for i in 0..v.len() {
-            //             for lhs_value in v[i].iter().cloned() {
-            //                 for j in (i + 1)..v.len() {
-            //                     for rhs_value in v[j].iter().cloned() {
-            //                         if lhs_value == rhs_value {
-            //                             dice[i].entry(lhs_value).or_default().0.insert(j);
-            //                             dice[i].entry(lhs_value).or_default().1.insert(j);
-            //                             dice[j].entry(rhs_value).or_default().0.insert(i);
-            //                             dice[j].entry(rhs_value).or_default().1.insert(i);
-            //                         } else if lhs_value > rhs_value {
-            //                             dice[i].entry(lhs_value).or_default().1.insert(j);
-            //                             dice[j].entry(rhs_value).or_default().0.insert(i);
-            //                         } else {
-            //                             dice[i].entry(lhs_value).or_default().0.insert(j);
-            //                             dice[j].entry(rhs_value).or_default().1.insert(i);
-            //                         }
-            //                     }
-            //                 }
-            //             }
-            //         }
-
-            //         return (0..lhs as usize)
-            //             .map(|i| {
-            //                 let mut set: HashSet<i64> = HashSet::new();
-            //                 for map in dice.iter() {
-            //                     for (value, (greater_eq, lesser_eq)) in map.iter() {
-            //                         let left_threshold = i;
-            //                         let right_threshold = v.len() - i - 1;
-            //                         if greater_eq.len() >= left_threshold
-            //                             && lesser_eq.len() >= right_threshold
-            //                         {
-            //                             set.insert(*value);
-            //                         }
-            //                     }
-            //                 }
-            //                 let mut v: Vec<i64> = set.iter().cloned().collect();
-            //                 v.sort();
-            //                 v
-            //             })
-            //             .collect();
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     nested_possible_values_to_mod(&something.nested_possible_values(), modulo)
-            // }),
         }
     }
 
@@ -882,64 +630,6 @@ impl GrammarRule {
                         .collect::<_>(),
                 ))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         let v = child.nested_possible_values();
-            //         // for each value, find how many values in other dice it has
-            //         let mut dice: Vec<HashMap<i64, (HashSet<usize>, HashSet<usize>)>> =
-            //             vec![HashMap::new(); v.len()];
-            //         for i in 0..v.len() {
-            //             for lhs_value in v[i].iter().cloned() {
-            //                 for j in (i + 1)..v.len() {
-            //                     for rhs_value in v[j].iter().cloned() {
-            //                         if lhs_value == rhs_value {
-            //                             dice[i].entry(lhs_value).or_default().0.insert(j);
-            //                             dice[i].entry(lhs_value).or_default().1.insert(j);
-            //                             dice[j].entry(rhs_value).or_default().0.insert(i);
-            //                             dice[j].entry(rhs_value).or_default().1.insert(i);
-            //                         } else if lhs_value > rhs_value {
-            //                             dice[i].entry(lhs_value).or_default().1.insert(j);
-            //                             dice[j].entry(rhs_value).or_default().0.insert(i);
-            //                         } else {
-            //                             dice[i].entry(lhs_value).or_default().0.insert(j);
-            //                             dice[j].entry(rhs_value).or_default().1.insert(i);
-            //                         }
-            //                     }
-            //                 }
-            //             }
-            //         }
-
-            //         return (0..lhs as usize)
-            //             .map(|i| {
-            //                 let mut set: HashSet<i64> = HashSet::new();
-            //                 for map in dice.iter() {
-            //                     for (value, (greater_eq, lesser_eq)) in map.iter() {
-            //                         let left_threshold = i;
-            //                         let right_threshold = v.len() - i - 1;
-            //                         if lesser_eq.len() >= left_threshold
-            //                             && greater_eq.len() >= right_threshold
-            //                         {
-            //                             set.insert(*value);
-            //                         }
-            //                     }
-            //                 }
-            //                 let mut v: Vec<i64> = set.iter().cloned().collect();
-            //                 v.sort();
-            //                 v
-            //             })
-            //             .collect();
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         let mut v = child.nested_possible_values_mod(modulo);
-            //         v.sort_by_key(|v| *v.last().unwrap());
-            //         v.resize(lhs as usize, vec![]);
-            //         return v;
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -969,23 +659,6 @@ impl GrammarRule {
                 let new_size = lhs as usize;
                 Ok(MinMaxOutput::Array(vec![MinMax { min, max }; new_size]))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         let v = merge_possible_values(&child.nested_possible_values());
-            //         return vec![v; lhs as usize];
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         let v = merge_possible_values_mod(
-            //             &child.nested_possible_values_mod(modulo),
-            //             modulo,
-            //         );
-            //         return vec![v; lhs as usize];
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -1061,23 +734,6 @@ impl GrammarRule {
                     (0..new_size as i64).collect(),
                 ))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         let v = merge_possible_values(&child.nested_possible_values());
-            //         return vec![v; lhs as usize];
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::UnaryArray { child, .. } = something {
-            //         let v = merge_possible_values_mod(
-            //             &child.nested_possible_values_mod(modulo),
-            //             modulo,
-            //         );
-            //         return vec![v; lhs as usize];
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -1110,25 +766,6 @@ impl GrammarRule {
                 let new_size = lhs as usize;
                 Ok(MinMaxOutput::Array(vec![MinMax { min, max }; new_size]))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::Generator { .. } = something {
-            //         let rhs = rhs as i64;
-            //         return vec![(1..=rhs).collect(); lhs as usize];
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::Generator { .. } = something {
-            //         let rhs = rhs as usize;
-            //         let range: Vec<_> = if rhs >= modulo {
-            //             (0..modulo).collect()
-            //         } else {
-            //             (1..=rhs).collect()
-            //         };
-            //         return vec![range; lhs as usize];
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -1145,28 +782,6 @@ impl GrammarRule {
                 let max = -rhs.min;
                 Ok(MinMaxOutput::Value(MinMax { min, max }))
             }),
-            // possible_values: Box::new(move |something| {
-            //     if let Self::UnaryNumber { child, .. } = something {
-            //         return vec![child
-            //             .possible_values()
-            //             .into_iter()
-            //             .map(|i| -i)
-            //             .rev()
-            //             .collect()];
-            //     }
-            //     vec![]
-            // }),
-            // possible_values_mod: Box::new(move |something, modulo: usize| {
-            //     if let Self::UnaryNumber { child, .. } = something {
-            //         return vec![child
-            //             .possible_values_mod(modulo)
-            //             .into_iter()
-            //             .map(|i| (modulo - i).rem_euclid(modulo))
-            //             .rev()
-            //             .collect()];
-            //     }
-            //     vec![]
-            // }),
         }
     }
 
@@ -1191,14 +806,6 @@ impl GrammarRule {
             exec: Box::new(move |_| Ok(ExecOutput::Array(output.clone()))),
             to_string: Box::new(move || format!("({lhs}..{rhs})")),
             min_max: Box::new(move || Ok(MinMaxOutput::Array(min_max_arr.clone()))),
-            // possible_values: Box::new(move |_| vec![possible_values.clone()]),
-            // possible_values_mod: Box::new(move |_, modulo: usize| {
-            //     possible_values_mod
-            //         .iter()
-            //         .map(|i| i.rem_euclid(modulo as i64) as usize)
-            //         .map(|i| vec![i])
-            //         .collect()
-            // }),
         }
     }
 
@@ -1214,22 +821,6 @@ impl GrammarRule {
         }
     }
 
-    // fn step_count(&self) -> usize {
-    //     match &self {
-    //         GrammarRule::Aggregate { children, .. } => {
-    //             children.iter().map(|c| c.step_count()).sum()
-    //         }
-    //         GrammarRule::Number { .. } => 1,
-    //         GrammarRule::Select { lhs, rhs, .. } => lhs.step_count() + rhs.step_count() + rhs.len(),
-    //         GrammarRule::Generator { step_count, .. } => *step_count,
-    //         GrammarRule::UnaryNumber { child, .. } => child.step_count() + 1,
-    //         GrammarRule::UnaryArray {
-    //             step_count, child, ..
-    //         } => child.step_count() + step_count,
-    //         GrammarRule::Binary { lhs, rhs, .. } => lhs.step_count() + rhs.step_count() + 1,
-    //     }
-    // }
-
     fn variable_count(&self) -> usize {
         match &self {
             GrammarRule::Generator { variable_count, .. } => *variable_count,
@@ -1237,106 +828,6 @@ impl GrammarRule {
             _ => 0,
         }
     }
-
-    // fn possible_values_mod(&self, modulo: usize) -> Vec<usize> {
-    //     merge_possible_values_mod(&self.nested_possible_values_mod(modulo), modulo)
-    // }
-
-    // fn possible_values(&self) -> Vec<i64> {
-    //     merge_possible_values(&self.nested_possible_values())
-    // }
-
-    // fn nested_possible_values_mod(&self, modulo: usize) -> Vec<Vec<usize>> {
-    //     match &self {
-    //         GrammarRule::Aggregate { children, .. } => children
-    //             .iter()
-    //             .map(|child| {
-    //                 sum_possible_values_mod(&child.nested_possible_values_mod(modulo), modulo)
-    //             })
-    //             .collect(),
-    //         GrammarRule::Number { number, .. } => {
-    //             vec![vec![number.rem_euclid(modulo as i64) as usize]]
-    //         }
-    //         GrammarRule::Select { lhs, rhs, .. } => {
-    //             let lhs_nested_possibilities = lhs.nested_possible_values_mod(modulo);
-    //             rhs.nested_possible_values_mod(lhs.len())
-    //                 .iter()
-    //                 .map(|v| {
-    //                     let mut set: HashSet<usize> = HashSet::new();
-    //                     for i in v {
-    //                         for possible in lhs_nested_possibilities[*i].iter() {
-    //                             set.insert(*possible);
-    //                             if set.len() == modulo {
-    //                                 break;
-    //                             }
-    //                         }
-    //                     }
-    //                     let mut v: Vec<usize> = set.iter().cloned().collect();
-    //                     v.sort();
-    //                     v
-    //                 })
-    //                 .collect()
-    //         }
-    //         GrammarRule::Generator {
-    //             possible_values_mod,
-    //             ..
-    //         } => possible_values_mod(self, modulo),
-
-    //         GrammarRule::UnaryNumber {
-    //             possible_values_mod,
-    //             ..
-    //         } => possible_values_mod(self, modulo),
-    //         GrammarRule::UnaryArray {
-    //             possible_values_mod,
-    //             ..
-    //         } => possible_values_mod(self, modulo),
-    //         GrammarRule::Binary {
-    //             possible_values_mod,
-    //             ..
-    //         } => possible_values_mod(self, modulo),
-    //     }
-    // }
-
-    // fn nested_possible_values(&self) -> Vec<Vec<i64>> {
-    //     match &self {
-    //         GrammarRule::Aggregate { children, .. } => children
-    //             .iter()
-    //             .map(|child| sum_possible_values(&child.nested_possible_values()))
-    //             .collect(),
-    //         GrammarRule::Number { number, .. } => {
-    //             vec![vec![*number]]
-    //         }
-    //         GrammarRule::Select { lhs, rhs, .. } => {
-    //             let lhs_nested_possibilities = lhs.nested_possible_values();
-    //             rhs.nested_possible_values_mod(lhs.len())
-    //                 .iter()
-    //                 .map(|v| {
-    //                     let mut set: HashSet<i64> = HashSet::new();
-    //                     for i in v {
-    //                         for possible in lhs_nested_possibilities[*i].iter() {
-    //                             set.insert(*possible);
-    //                         }
-    //                     }
-    //                     let mut v: Vec<i64> = set.iter().cloned().collect();
-    //                     v.sort();
-    //                     v
-    //                 })
-    //                 .collect()
-    //         }
-    //         GrammarRule::Generator {
-    //             possible_values, ..
-    //         } => possible_values(self),
-    //         GrammarRule::UnaryNumber {
-    //             possible_values, ..
-    //         } => possible_values(self),
-    //         GrammarRule::UnaryArray {
-    //             possible_values, ..
-    //         } => possible_values(self),
-    //         GrammarRule::Binary {
-    //             possible_values, ..
-    //         } => possible_values(self),
-    //     }
-    // }
 
     fn min_max(&self) -> MinMaxResult {
         match &self {
@@ -2230,19 +1721,4 @@ mod tests {
         assert_eq!(grammar.min(), 3);
         assert_eq!(grammar.max(), 9);
     }
-
-    // #[test]
-    // fn test_nested_possible() {
-    //     // let x = "[3p(d100, 80, 60, 40, 20)|1..2]";
-    //     let x = "0..8";
-    //     let mut tokenizer = Tokenizer::new(x);
-    //     let result = expression(&mut tokenizer).unwrap();
-    //     let p = result.min_max().unwrap().value();
-    //     println!("{} {}", p.min, p.max);
-
-    //     let mut tokenizer = Tokenizer::new(x);
-    //     let result = expression(&mut tokenizer).unwrap();
-    //     let p = result.nested_possible_values_mod(3);
-    //     println!("{:?}", p);
-    // }
 }

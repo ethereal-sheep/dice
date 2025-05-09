@@ -831,9 +831,19 @@ impl GrammarRule {
 
     fn variable_count(&self) -> usize {
         match &self {
+            GrammarRule::Aggregate { children, .. } => {
+                children.iter().map(|g| g.variable_count()).sum()
+            }
+            GrammarRule::Number { .. } => 0,
+            GrammarRule::Select { lhs, .. } => lhs.variable_count(),
             GrammarRule::Generator { variable_count, .. } => *variable_count,
-            GrammarRule::UnaryArray { variable_count, .. } => *variable_count,
-            _ => 0,
+            GrammarRule::UnaryArray {
+                variable_count,
+                child,
+                ..
+            } => *variable_count + child.variable_count(),
+            GrammarRule::Binary { rhs, lhs, .. } => lhs.variable_count() + rhs.variable_count(),
+            GrammarRule::UnaryNumber { child, .. } => child.variable_count(),
         }
     }
 
@@ -1442,6 +1452,7 @@ pub(crate) struct Grammar {
     compiled_string: String,
     callstack: Vec<StackFn>,
     search_space: BigUint,
+    variable_count: usize,
     output_size: usize,
     min_max: MinMax,
 }
@@ -1463,6 +1474,7 @@ impl Grammar {
         let mut search_space = BigUint::one();
         let compiled_string = result.to_string();
         let min_max_output = result.min_max().unwrap();
+        let variable_count = result.variable_count();
         let _ = result.dfs(&mut callstack, &mut search_space);
 
         Ok(Self {
@@ -1470,6 +1482,7 @@ impl Grammar {
             callstack,
             search_space,
             output_size: min_max_output.size(),
+            variable_count,
             min_max: min_max_output.value(),
         })
     }
@@ -1484,6 +1497,10 @@ impl Grammar {
 
     pub(crate) fn output_size(&self) -> usize {
         self.output_size
+    }
+
+    pub(crate) fn variable_count(&self) -> usize {
+        self.variable_count
     }
 
     pub(crate) fn exec(
@@ -1701,6 +1718,39 @@ mod tests {
         let result = Grammar::parse(x);
         let grammar = result.unwrap();
         assert_eq!(grammar.output_size(), 5);
+    }
+
+    #[test]
+    fn test_variable_count() {
+        let x = "1 + 2";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.variable_count(), 0);
+
+        let x = "1..10";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.variable_count(), 0);
+
+        let x = "[(1,2,3)|0,2,4]";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.variable_count(), 0);
+
+        let x = "d4";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.variable_count(), 1);
+
+        let x = "10d4";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.variable_count(), 10);
+
+        let x = "10p10d4";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.variable_count(), 20);
     }
 
     #[test]

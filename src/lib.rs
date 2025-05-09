@@ -197,6 +197,10 @@ impl Dice {
         self.grammar.max()
     }
 
+    pub fn variable_count(&self) -> usize {
+        self.grammar.variable_count()
+    }
+
     pub fn roll(&self, rng: &mut impl rand::Rng, options: RollOptions) -> ExecResultWithDetails {
         self.grammar.exec(rng, options)
     }

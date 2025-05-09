@@ -297,6 +297,12 @@ pub fn main() {
                             dice.min().bold().bright_yellow(),
                             dice.max().bold().bright_yellow()
                         );
+                        println!(
+                            "{:>start_width$} {:<middle_width$} => {}",
+                            "",
+                            "var. count",
+                            dice.variable_count().bold().bright_yellow()
+                        );
                     }
 
                     let options = TestOptions {

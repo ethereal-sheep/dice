@@ -90,6 +90,24 @@ impl ExecOutput {
         }
     }
 
+    pub fn result_string(&self) -> String {
+        match &self {
+            ExecOutput::Value(i) => i.to_string(),
+            ExecOutput::Array(v) => vi_to_string(v),
+        }
+    }
+
+    pub fn raw_string(&self) -> String {
+        match &self {
+            ExecOutput::Value(i) => i.to_string(),
+            ExecOutput::Array(v) => v
+                .iter()
+                .map(i64::to_string)
+                .intersperse(",".into())
+                .collect::<String>(),
+        }
+    }
+
     fn with_line_detail(
         self,
         name: &'static str,
@@ -116,30 +134,6 @@ impl fmt::Display for ExecOutput {
         match self {
             ExecOutput::Value(n) => write!(f, "{}", n),
             ExecOutput::Array(vec) => write!(f, "{}", vi_to_string(vec)),
-        }
-    }
-}
-
-impl ExecDetails {
-    pub fn value(&self) -> i64 {
-        self.output.value()
-    }
-
-    pub fn result_string(&self) -> String {
-        match &self.output {
-            ExecOutput::Value(i) => i.to_string(),
-            ExecOutput::Array(v) => vi_to_string(v),
-        }
-    }
-
-    pub fn raw_string(&self) -> String {
-        match &self.output {
-            ExecOutput::Value(i) => i.to_string(),
-            ExecOutput::Array(v) => v
-                .iter()
-                .map(i64::to_string)
-                .intersperse(",".into())
-                .collect::<String>(),
         }
     }
 }
@@ -878,6 +872,41 @@ impl GrammarRule {
         }
     }
 
+    fn consteval_subset(&self) -> Option<ExecOutput> {
+        match self {
+            GrammarRule::Aggregate { children, .. } => {
+                let v = children
+                    .iter()
+                    .map_while(|c| c.consteval().map(|o| o.value()))
+                    .collect::<Vec<_>>();
+                (v.len() == children.len()).then_some(ExecOutput::Array(v))
+            }
+            GrammarRule::Number { number, .. } => Some(ExecOutput::Value(*number)),
+            GrammarRule::Select { lhs, rhs, .. } => lhs
+                .consteval()
+                .and_then(|o| o.expect_array().ok())
+                .map(|o| ExecOutput::Array(select_suffix(&o, rhs))),
+            GrammarRule::Generator { exec, .. } => match exec {
+                ExecFn::Constant(exec) => exec().ok(),
+                _ => None,
+            },
+            GrammarRule::UnaryNumber { child, exec, .. } => match exec {
+                ExecFn::Constant(exec) => exec(child.consteval()?.value()).ok(),
+                _ => None,
+            },
+            GrammarRule::UnaryArray { child, exec, .. } => match exec {
+                ExecFn::Constant(exec) => exec(&child.consteval()?.expect_array().ok()?).ok(),
+                _ => None,
+            },
+            GrammarRule::Binary { lhs, rhs, exec, .. } => match exec {
+                ExecFn::Constant(exec) => {
+                    exec(lhs.consteval()?.value(), rhs.consteval()?.value()).ok()
+                }
+                _ => None,
+            },
+        }
+    }
+
     fn consteval(&self) -> Option<ExecOutput> {
         match self {
             GrammarRule::Aggregate { children, .. } => {
@@ -1372,14 +1401,16 @@ fn suffix(tokenizer: &mut Tokenizer) -> Result<Vec<i64>, GrammarError> {
         Some(token) => Err(GrammarError {
             error_type: GrammarErrorType::UnexpectedToken {
                 token,
-                expected: "Suffix",
+                expected: "Number or Range",
             },
             error_index: tokenizer.expended_count(),
             error_length: tokenizer.peek_token_count(),
             input_string: tokenizer.input_str().into(),
         }),
         None => Err(GrammarError {
-            error_type: GrammarErrorType::UnexpectedEnd { expected: "Suffix" },
+            error_type: GrammarErrorType::UnexpectedEnd {
+                expected: "Number or Range",
+            },
             error_index: tokenizer.expended_count(),
             error_length: 1,
             input_string: tokenizer.input_str().into(),
@@ -1601,6 +1632,7 @@ pub(crate) struct Grammar {
     search_space: BigUint,
     variable_count: usize,
     min_max: MinMax,
+    runtime_value: Either<usize, ExecOutput>,
 }
 
 impl Grammar {
@@ -1622,7 +1654,8 @@ impl Grammar {
         let compiled_string = format!("{:#}", result);
         let min_max = result.min_max().unwrap().value();
         let variable_count = result.variable_count();
-        let _ = result.compile(&mut callstack, &mut compiled_constants, &mut search_space);
+        let runtime_value =
+            result.compile(&mut callstack, &mut compiled_constants, &mut search_space);
 
         Ok(Self {
             compiled_string,
@@ -1631,6 +1664,7 @@ impl Grammar {
             search_space,
             variable_count,
             min_max,
+            runtime_value,
         })
     }
 
@@ -1650,6 +1684,10 @@ impl Grammar {
         &self.compiled_constants
     }
 
+    pub(crate) fn consteval(&self) -> Option<ExecOutput> {
+        self.runtime_value.as_ref().cloned().right()
+    }
+
     pub(crate) fn exec(
         &self,
         rng: &mut impl rand::Rng,
@@ -1657,6 +1695,9 @@ impl Grammar {
     ) -> ExecResultWithDetails {
         let mut stack: Vec<ExecOutput> = vec![];
         let mut details: Vec<ExecLineDetail> = vec![];
+        if let Some(output) = self.consteval() {
+            return Ok(output.with_details(details));
+        }
         for stack_fn in &self.callstack {
             let (output, line_detail) = (stack_fn.exec)(&stack, rng, &options)?;
             if let Some(detail) = line_detail {
@@ -1673,8 +1714,14 @@ impl Grammar {
         options: TestOptions,
     ) -> TestResultWithDetails {
         let start_time = Instant::now();
-        let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; options.test_size];
         let mut details: Vec<TestLineDetail> = vec![];
+        if let Some(output) = self.consteval() {
+            return Ok(TestDetails {
+                output: vec![output.value(); options.test_size],
+                time_taken: start_time.elapsed(),
+                details,
+            });
+        }
         let exec_options = RollOptions {
             include_line_details: false,
         };
@@ -1688,13 +1735,14 @@ impl Grammar {
                 step_count: 0,
                 operation_output_size: 0,
                 test_size: options.test_size,
-                start_time: Instant::now(),
+                start_time,
             },
             operations_count: self.callstack.len(),
             total_step_count: self.callstack.iter().map(|f| f.step_count).sum(),
-            start_time: Instant::now(),
+            start_time,
         };
 
+        let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; options.test_size];
         for (j, stack_fn) in self.callstack.iter().enumerate() {
             info.operation_test_info = OperationTestInfo {
                 code: stack_fn.name,

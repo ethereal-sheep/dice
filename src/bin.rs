@@ -118,76 +118,96 @@ pub fn main() {
                             dice.bright_magenta()
                         );
                     }
-                    let seed = matches.get_one::<u64>("seed");
-                    let mut rng: SmallRng = if let Some(seed) = seed {
-                        SmallRng::seed_from_u64(*seed)
+                    let result = if let Some(output) = dice.consteval() {
+                        println!(
+                            "{:>start_width$} {}",
+                            "Notice".bold().bright_green(),
+                            "Script has no random variables"
+                        );
+                        Some(output)
                     } else {
-                        SmallRng::from_entropy()
-                    };
-                    if is_debug {
-                        if let Some(seed) = seed {
-                            println!(
-                                "{:>start_width$} with seeded {}; Seed {}",
-                                "Rolling".bold().bright_cyan(),
-                                "Small RNG".bold().bright_cyan(),
-                                seed.bold().bright_yellow(),
-                            );
+                        let seed = matches.get_one::<u64>("seed");
+                        let mut rng: SmallRng = if let Some(seed) = seed {
+                            SmallRng::seed_from_u64(*seed)
                         } else {
-                            println!(
-                                "{:>start_width$} with {}",
-                                "Rolling".bold().bright_cyan(),
-                                "Small RNG".bold().bright_cyan()
-                            );
+                            SmallRng::from_entropy()
+                        };
+                        if is_debug {
+                            if let Some(seed) = seed {
+                                println!(
+                                    "{:>start_width$} with seeded {}; Seed {}",
+                                    "Rolling".bold().bright_cyan(),
+                                    "Small RNG".bold().bright_cyan(),
+                                    seed.bold().bright_yellow(),
+                                );
+                            } else {
+                                println!(
+                                    "{:>start_width$} with {}",
+                                    "Rolling".bold().bright_cyan(),
+                                    "Small RNG".bold().bright_cyan()
+                                );
+                            }
                         }
-                    }
-                    let result = dice.roll(
-                        &mut rng,
-                        RollOptions {
-                            include_line_details: is_debug,
-                        },
-                    );
-                    match result {
-                        Ok(result) => {
-                            if is_debug {
-                                if let Some(middle_width) = result
-                                    .details
-                                    .iter()
-                                    .map(|line| line.operation.len())
-                                    .max()
-                                    .map(|w| w.max(15))
-                                {
-                                    for line in result.details.iter() {
-                                        println!(
-                                            "{:>start_width$} {:middle_width$} => {}",
-                                            line.name.bold().bright_yellow(),
-                                            line.operation.bright_magenta(),
-                                            line.output
+                        let result = dice.roll(
+                            &mut rng,
+                            RollOptions {
+                                include_line_details: is_debug,
+                            },
+                        );
+
+                        match result {
+                            Ok(result) => {
+                                if is_debug {
+                                    if let Some(middle_width) = result
+                                        .details
+                                        .iter()
+                                        .map(|line| line.operation.len())
+                                        .max()
+                                        .map(|w| w.max(15))
+                                    {
+                                        for line in result.details.iter() {
+                                            println!(
+                                                "{:>start_width$} {:middle_width$} => {}",
+                                                line.name.bold().bright_yellow(),
+                                                line.operation.bright_magenta(),
+                                                line.output
+                                            );
+                                        }
+                                        print!(
+                                            "{:>start_width$} {:.<middle_width$} => ",
+                                            "Result".bold().bright_green(),
+                                            ""
+                                        );
+                                        if let ExecOutput::Array(v) = &result.output {
+                                            if !is_raw && v.len() > 1 {
+                                                print!("+(...) => ");
+                                            }
+                                        }
+                                    } else {
+                                        print!(
+                                            "{:>start_width$} => ",
+                                            "Result".bold().bright_cyan()
                                         );
                                     }
-                                    print!(
-                                        "{:>start_width$} {:.<middle_width$} => ",
-                                        "Result".bold().bright_green(),
-                                        ""
-                                    );
-                                    if let ExecOutput::Array(v) = &result.output {
-                                        if !is_raw && v.len() > 1 {
-                                            print!("+(...) => ");
-                                        }
-                                    }
-                                } else {
-                                    print!("{:>start_width$} => ", "Result".bold().bright_cyan());
+
+                                    println!("{}", result.output.result_string().bold());
                                 }
 
-                                println!("{}", result.result_string().bold());
+                                Some(result.output)
                             }
-
-                            if is_raw {
-                                println!("{}", result.raw_string())
-                            } else {
-                                println!("{}", result.value())
+                            Err(err) => {
+                                println!("{:>start_width$} {}", "Error".red().bold(), err);
+                                None
                             }
                         }
-                        Err(err) => println!("{:>start_width$} {}", "Error".red().bold(), err),
+                    };
+
+                    if let Some(result) = result {
+                        if is_raw {
+                            println!("{}", result.raw_string())
+                        } else {
+                            println!("{}", result.value())
+                        }
                     }
                 }
                 Err(err) => {
@@ -224,19 +244,6 @@ pub fn main() {
             let result = script.parse::<Dice>();
             match result {
                 Ok(dice) => {
-                    let test_size = if let Some(n) = matches.get_one::<u64>("size") {
-                        *n as usize
-                    } else {
-                        if is_debug {
-                            eprintln!(
-                                "{:>start_width$} defaulting test size to {}",
-                                "Notice".bold().bright_green(),
-                                100000.bold().bright_yellow(),
-                            );
-                        }
-                        100000
-                    };
-
                     if is_debug {
                         let constants_size = dice.compiled_constants().len();
                         if constants_size > 0 {
@@ -256,187 +263,219 @@ pub fn main() {
                                 );
                             }
                         }
-                        eprintln!(
+                        println!(
                             "{:>start_width$} {}",
                             "Compiled".bold().yellow(),
                             dice.bright_magenta()
                         );
                     }
-                    let seed = matches.get_one::<u64>("seed");
-                    let mut rng = if let Some(seed) = seed {
-                        SmallRng::seed_from_u64(*seed)
+
+                    if let Some(output) = dice.consteval() {
+                        println!(
+                            "{:>start_width$} {}",
+                            "Notice".bold().bright_green(),
+                            "Script has no random variables"
+                        );
+                        println!(
+                            "{:>start_width$} => {}",
+                            "Consteval".bold().bright_cyan(),
+                            output.value(),
+                        );
                     } else {
-                        SmallRng::from_entropy()
-                    };
-                    if is_debug {
-                        if let Some(seed) = seed {
-                            println!(
-                                "{:>start_width$} with seeded {}; Seed {}",
-                                "Testing".bold().bright_cyan(),
-                                "Small RNG".bold().bright_cyan(),
-                                seed.bold().bright_yellow(),
-                            );
+                        let test_size = if let Some(n) = matches.get_one::<u64>("size") {
+                            *n as usize
                         } else {
+                            if is_debug {
+                                eprintln!(
+                                    "{:>start_width$} defaulting test size to {}",
+                                    "Notice".bold().bright_green(),
+                                    100000.bold().bright_yellow(),
+                                );
+                            }
+                            100000
+                        };
+
+                        let seed = matches.get_one::<u64>("seed");
+                        let mut rng = if let Some(seed) = seed {
+                            SmallRng::seed_from_u64(*seed)
+                        } else {
+                            SmallRng::from_entropy()
+                        };
+                        if is_debug {
+                            if let Some(seed) = seed {
+                                println!(
+                                    "{:>start_width$} with seeded {}; Seed {}",
+                                    "Testing".bold().bright_cyan(),
+                                    "Small RNG".bold().bright_cyan(),
+                                    seed.bold().bright_yellow(),
+                                );
+                            } else {
+                                println!(
+                                    "{:>start_width$} with {}",
+                                    "Testing".bold().bright_cyan(),
+                                    "Small RNG".bold().bright_cyan()
+                                );
+                            }
+                        }
+
+                        let middle_width = 15;
+
+                        if is_debug {
+                            eprintln!(
+                                "{:>start_width$} {:<middle_width$} => {}",
+                                "Running".bold().bright_cyan(),
+                                "test of size",
+                                test_size.bold().bright_yellow()
+                            );
+                            eprintln!(
+                                "{:>start_width$} {:<middle_width$} => {}",
+                                "",
+                                "search space",
+                                big_uint_to_scientific(dice.search_space(), None, None)
+                                    .bold()
+                                    .bright_yellow()
+                            );
+                            eprintln!(
+                                "{:>start_width$} {:<middle_width$} => ~{}",
+                                "",
+                                "step count",
+                                dice.step_count().bold().bright_yellow()
+                            );
                             println!(
-                                "{:>start_width$} with {}",
-                                "Testing".bold().bright_cyan(),
-                                "Small RNG".bold().bright_cyan()
+                                "{:>start_width$} {:<middle_width$} => {}..{}",
+                                "",
+                                "min-max range",
+                                dice.min().bold().bright_yellow(),
+                                dice.max().bold().bright_yellow()
+                            );
+                            println!(
+                                "{:>start_width$} {:<middle_width$} => {}",
+                                "",
+                                "var. count",
+                                dice.variable_count().bold().bright_yellow()
                             );
                         }
-                    }
 
-                    let middle_width = 15;
-
-                    if is_debug {
-                        eprintln!(
-                            "{:>start_width$} {:<middle_width$} => {}",
-                            "Running".bold().bright_cyan(),
-                            "test of size",
-                            test_size.bold().bright_yellow()
-                        );
-                        eprintln!(
-                            "{:>start_width$} {:<middle_width$} => {}",
-                            "",
-                            "search space",
-                            big_uint_to_scientific(dice.search_space(), None, None)
-                                .bold()
-                                .bright_yellow()
-                        );
-                        eprintln!(
-                            "{:>start_width$} {:<middle_width$} => ~{}",
-                            "",
-                            "step count",
-                            dice.step_count().bold().bright_yellow()
-                        );
-                        println!(
-                            "{:>start_width$} {:<middle_width$} => {}..{}",
-                            "",
-                            "min-max range",
-                            dice.min().bold().bright_yellow(),
-                            dice.max().bold().bright_yellow()
-                        );
-                        println!(
-                            "{:>start_width$} {:<middle_width$} => {}",
-                            "",
-                            "var. count",
-                            dice.variable_count().bold().bright_yellow()
-                        );
-                    }
-
-                    let options = TestOptions {
-                        is_debug,
-                        test_size: test_size as usize,
-                        interval_callback: Some(Rc::new(move |info| {
-                            let interval = if info.test_size() < 100 {
-                                1
-                            } else {
-                                info.test_size() / 100
-                            };
-
-                            let debug_message = if is_debug {
-                                let message = format!(
-                                    "{:>start_width$} {:<middle_width$} =>",
-                                    info.current_test_info()
-                                        .operation_code()
-                                        .bright_yellow()
-                                        .bold(),
-                                    info.current_test_info().operation_name().bright_magenta()
-                                );
-                                Some(message)
-                            } else {
-                                None
-                            };
-
-                            if info.current_test_info().iteration_index() % interval == 0 {
-                                let interval = if test_size < 100 { 1 } else { test_size / 100 };
-                                if let Some(message) = &debug_message {
-                                    let percent =
-                                        (info.current_test_info().iteration_index() / interval) + 1;
-                                    eprint!(
-                                        "\x1b[2K\r{message} {}▏{percent:>2}% | ~{} steps ",
-                                        progress_string(
-                                            info.test_size() as f64,
-                                            20,
-                                            info.current_test_info().iteration_index() as f64
-                                        ),
-                                        info.current_test_info().step_count()
-                                    );
+                        let options = TestOptions {
+                            is_debug,
+                            test_size: test_size as usize,
+                            interval_callback: Some(Rc::new(move |info| {
+                                let interval = if info.test_size() < 100 {
+                                    1
                                 } else {
-                                    let interval = if info.total_test_count() < 100 {
-                                        1
+                                    info.test_size() / 100
+                                };
+
+                                let debug_message = if is_debug {
+                                    let message = format!(
+                                        "{:>start_width$} {:<middle_width$} =>",
+                                        info.current_test_info()
+                                            .operation_code()
+                                            .bright_yellow()
+                                            .bold(),
+                                        info.current_test_info().operation_name().bright_magenta()
+                                    );
+                                    Some(message)
+                                } else {
+                                    None
+                                };
+
+                                if info.current_test_info().iteration_index() % interval == 0 {
+                                    let interval =
+                                        if test_size < 100 { 1 } else { test_size / 100 };
+                                    if let Some(message) = &debug_message {
+                                        let percent = (info.current_test_info().iteration_index()
+                                            / interval)
+                                            + 1;
+                                        eprint!(
+                                            "\x1b[2K\r{message} {}▏{percent:>2}% | ~{} steps ",
+                                            progress_string(
+                                                info.test_size() as f64,
+                                                20,
+                                                info.current_test_info().iteration_index() as f64
+                                            ),
+                                            info.current_test_info().step_count()
+                                        );
                                     } else {
-                                        info.total_test_count() / 100
-                                    };
-                                    let percent = info.total_test_index() / interval + 1;
-                                    eprint!(
+                                        let interval = if info.total_test_count() < 100 {
+                                            1
+                                        } else {
+                                            info.total_test_count() / 100
+                                        };
+                                        let percent = info.total_test_index() / interval + 1;
+                                        eprint!(
                                     "\x1b[2K\r{:>start_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s ",
                                     "Testing".bold().bright_cyan(),
                                     info.current_test_info().operation_name().bright_magenta(),
                                     progress_string(info.total_test_count() as f64, 20, info.total_test_index() as f64),
                                     info.start_time().elapsed().as_secs_f32().bold()
                                 );
+                                    }
                                 }
-                            }
 
-                            if info.current_test_info().is_last() {
-                                if let Some(message) = &debug_message {
+                                if info.current_test_info().is_last() {
+                                    if let Some(message) = &debug_message {
+                                        eprintln!(
+                                            "\x1b[2K\r{message} {:<5}ms | ~{} steps ",
+                                            info.current_test_info()
+                                                .start_time()
+                                                .elapsed()
+                                                .as_millis(),
+                                            info.current_test_info().step_count()
+                                        );
+                                    }
+                                }
+                                if info.is_last() {
+                                    if !is_debug {
+                                        eprint!("\x1b[2K\r");
+                                    }
+
                                     eprintln!(
-                                        "\x1b[2K\r{message} {:<5}ms | ~{} steps ",
-                                        info.current_test_info().start_time().elapsed().as_millis(),
-                                        info.current_test_info().step_count()
+                                        "{:>start_width$} {:.<middle_width$} => {:<6.2}s",
+                                        "Finished".bold().bright_green(),
+                                        "",
+                                        info.start_time().elapsed().as_secs_f32().bold()
                                     );
-                                }
-                            }
-                            if info.is_last() {
-                                if !is_debug {
-                                    eprint!("\x1b[2K\r");
-                                }
 
-                                eprintln!(
-                                    "{:>start_width$} {:.<middle_width$} => {:<6.2}s",
-                                    "Finished".bold().bright_green(),
-                                    "",
-                                    info.start_time().elapsed().as_secs_f32().bold()
-                                );
+                                    if is_debug {
+                                        eprintln!(
+                                            "{:>start_width$} {:<middle_width$} => {:<5}ns",
+                                            "",
+                                            "avg. step time",
+                                            info.start_time().elapsed().as_nanos()
+                                                / (info.total_step_count() * test_size) as u128
+                                        );
+                                    }
+                                }
+                            })),
+                        };
 
+                        let result = dice.test(&mut rng, options);
+                        match result {
+                            Ok(result) => {
                                 if is_debug {
                                     eprintln!(
-                                        "{:>start_width$} {:<middle_width$} => {:<5}ns",
-                                        "",
-                                        "avg. step time",
-                                        info.start_time().elapsed().as_nanos()
-                                            / (info.total_step_count() * test_size) as u128
+                                        "{:>12} {} data points",
+                                        "Bucketing".bright_cyan().bold(),
+                                        result.output.len().bright_yellow().bold()
                                     );
                                 }
-                            }
-                        })),
-                    };
-
-                    let result = dice.test(&mut rng, options);
-                    match result {
-                        Ok(result) => {
-                            if is_debug {
-                                eprintln!(
-                                    "{:>12} {} data points",
-                                    "Bucketing".bright_cyan().bold(),
-                                    result.output.len().bright_yellow().bold()
+                                let reference = matches.get_one("reference").copied();
+                                let mut buckets = Buckets::from_range(dice.min(), dice.max());
+                                buckets.fill(&result.output);
+                                buckets.print_histogram(
+                                    start_width,
+                                    *matches.get_one::<u64>("height").unwrap_or(&10) as usize,
+                                    reference,
+                                    is_debug,
                                 );
-                            }
-                            let reference = matches.get_one("reference").copied();
-                            let mut buckets = Buckets::from_range(dice.min(), dice.max());
-                            buckets.fill(&result.output);
-                            buckets.print_histogram(
-                                start_width,
-                                *matches.get_one::<u64>("height").unwrap_or(&10) as usize,
-                                reference,
-                                is_debug,
-                            );
 
-                            let percentiles = Percentiles::from_data(result.output).unwrap();
-                            percentiles.print_table(start_width, reference, is_debug);
-                        }
-                        Err(err) => {
-                            eprintln!("\n{:>start_width$} {}", "Error".red().bold(), err);
+                                let percentiles = Percentiles::from_data(result.output).unwrap();
+                                percentiles.print_table(start_width, reference, is_debug);
+                            }
+                            Err(err) => {
+                                eprintln!("\n{:>start_width$} {}", "Error".red().bold(), err);
+                            }
                         }
                     }
                 }

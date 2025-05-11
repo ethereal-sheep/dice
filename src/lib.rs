@@ -211,6 +211,10 @@ impl Dice {
         self.grammar.compiled_constants()
     }
 
+    pub fn consteval(&self) -> Option<ExecOutput> {
+        self.grammar.consteval()
+    }
+
     pub fn roll(&self, rng: &mut impl rand::Rng, options: RollOptions) -> ExecResultWithDetails {
         self.grammar.exec(rng, options)
     }

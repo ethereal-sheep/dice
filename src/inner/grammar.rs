@@ -1,8 +1,8 @@
 use crate::inner::token::{Token, Tokenizer};
 use crate::{
     CompiledConstant, ExecDetails, ExecLineDetail, ExecOutput, ExecResult, ExecResultWithDetails,
-    OperationTestInfo, OverallTestInfo, RollOptions, TestDetails, TestLineDetail, TestOptions,
-    TestResultWithDetails,
+    FlattenedFunction, OperationTestInfo, OverallTestInfo, RollOptions, TestDetails,
+    TestLineDetail, TestOptions, TestResultWithDetails,
 };
 use core::fmt;
 use either::Either;
@@ -10,6 +10,7 @@ use num_bigint::BigUint;
 use num_traits::{FromPrimitive, One};
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
+use std::mem;
 use std::{rc::Rc, time::Instant};
 use voracious_radix_sort::RadixSort;
 
@@ -46,6 +47,37 @@ fn vi_to_string(v: &[i64]) -> String {
     string
 }
 
+fn vgr_to_string(v: &[GrammarRule]) -> String {
+    const MAX_CHARS: usize = 30;
+    let mut string = format!(
+        "({})",
+        v.iter()
+            .map(GrammarRule::to_string)
+            .intersperse(", ".into())
+            .collect::<String>()
+    );
+
+    for i in (1..=3).rev() {
+        if string.len() > MAX_CHARS {
+            string = format!(
+                "({}, ({} more..))",
+                v.iter()
+                    .take(i)
+                    .map(GrammarRule::to_string)
+                    .intersperse(", ".into())
+                    .collect::<String>(),
+                v.len() - i,
+            );
+        }
+    }
+
+    if string.len() > MAX_CHARS {
+        string = format!("({} values..)", v.len(),);
+    }
+
+    string
+}
+
 fn factorial(n: u64) -> BigUint {
     if n == 0 || n == 1 {
         BigUint::one()
@@ -62,7 +94,7 @@ fn range_to_vi(lhs: i64, rhs: i64) -> Vec<i64> {
     }
 }
 
-fn select_suffix<T: Clone>(lhs: &[T], rhs: &[i64]) -> Vec<T> {
+fn select_indices<T: Clone>(lhs: &[T], rhs: &[i64]) -> Vec<T> {
     rhs.iter()
         .map(|i| lhs[i.rem_euclid(lhs.len() as i64) as usize].clone())
         .collect()
@@ -265,9 +297,9 @@ impl MinMaxOutput {
     pub(crate) fn select(&self, rhs: &[i64]) -> Self {
         match self {
             MinMaxOutput::Value(n) => MinMaxOutput::Array(vec![n.clone(); rhs.len()]),
-            MinMaxOutput::Array(vec) => MinMaxOutput::Array(select_suffix(vec, rhs)),
+            MinMaxOutput::Array(vec) => MinMaxOutput::Array(select_indices(vec, rhs)),
             MinMaxOutput::Permutation(vec, suffix) => {
-                MinMaxOutput::Permutation(vec.clone(), select_suffix(suffix, rhs))
+                MinMaxOutput::Permutation(vec.clone(), select_indices(suffix, rhs))
             }
         }
     }
@@ -377,16 +409,7 @@ impl fmt::Display for GrammarRule {
             }
         }
         match self {
-            GrammarRule::Aggregate { children, .. } => {
-                write!(f, "(")?;
-                for (i, child) in children.iter().enumerate() {
-                    if i != 0usize {
-                        write!(f, ", ")?;
-                    }
-                    child.fmt(f)?;
-                }
-                write!(f, ")")
-            }
+            GrammarRule::Aggregate { children, .. } => vgr_to_string(children).fmt(f),
             GrammarRule::Number { number, .. } => write!(f, "{}", number),
             GrammarRule::Generator { to_string, .. } => write!(f, "{}", to_string()),
             GrammarRule::UnaryNumber { name, child, .. } => {
@@ -635,6 +658,7 @@ impl GrammarRule {
     }
 
     fn cho(lhs: u64, rhs: Self) -> Self {
+        let rhs_len = rhs.len();
         Self::UnaryArray {
             name: "Cho",
             size: lhs as usize,
@@ -642,18 +666,25 @@ impl GrammarRule {
             step_count: lhs as usize,
             operation: format!("{}C(...)", lhs),
             child: Box::new(rhs),
-            exec: ExecFn::Random(
-                lhs as usize,
-                Box::new(move |rhs, rng| {
+            exec: if rhs_len == 1 {
+                ExecFn::Constant(Box::new(move |rhs| {
                     let new_size = lhs as usize;
-                    let mut r: Vec<i64> = vec![];
-                    while r.len() != new_size {
-                        let i = rng.gen_range(0..rhs.len());
-                        r.push(rhs[i]);
-                    }
-                    Ok(ExecOutput::Array(r))
-                }),
-            ),
+                    Ok(ExecOutput::Array(vec![rhs[0]; new_size]))
+                }))
+            } else {
+                ExecFn::Random(
+                    lhs as usize,
+                    Box::new(move |rhs, rng| {
+                        let new_size = lhs as usize;
+                        let mut r: Vec<i64> = vec![];
+                        while r.len() != new_size {
+                            let i = rng.gen_range(0..rhs.len());
+                            r.push(rhs[i]);
+                        }
+                        Ok(ExecOutput::Array(r))
+                    }),
+                )
+            },
             to_string: Box::new(move |rhs| format!("{}C{}", lhs, vi_to_string(rhs))),
             min_max: Box::new(move |rhs| {
                 let min = rhs.iter().map(|o| o.min).min().unwrap();
@@ -669,16 +700,20 @@ impl GrammarRule {
         let n = rhs.len();
         const THRESHOLD: f64 = 0.75;
         let use_roll = (k as f64) < (THRESHOLD * n as f64);
+        let step_count = if n == 1 {
+            1
+        } else if use_roll {
+            n * n.ilog2() as usize
+        } else {
+            n + k
+        };
+
         Self::UnaryArray {
             name: "Pic",
             operation: format!("{}P(...)", lhs),
             size: lhs as usize,
             search_space_size: factorial(n as u64) / factorial(n as u64 - lhs),
-            step_count: if use_roll {
-                n * n.ilog2() as usize
-            } else {
-                n + k
-            },
+            step_count,
             child: Box::new(rhs),
             exec: ExecFn::Random(
                 lhs as usize,
@@ -872,39 +907,50 @@ impl GrammarRule {
         }
     }
 
-    fn consteval_subset(&self) -> Option<ExecOutput> {
+    fn consteval_indices(&self, indices: &[i64]) -> Option<Vec<i64>> {
         match self {
             GrammarRule::Aggregate { children, .. } => {
                 let v = children
                     .iter()
-                    .map_while(|c| c.consteval().map(|o| o.value()))
+                    .map(|c| c.consteval().map(|o| o.value()))
                     .collect::<Vec<_>>();
-                (v.len() == children.len()).then_some(ExecOutput::Array(v))
+                let v: Vec<i64> = select_indices(&v, &indices).into_iter().flatten().collect();
+                (v.len() == indices.len()).then_some(v)
             }
-            GrammarRule::Number { number, .. } => Some(ExecOutput::Value(*number)),
-            GrammarRule::Select { lhs, rhs, .. } => lhs
-                .consteval()
-                .and_then(|o| o.expect_array().ok())
-                .map(|o| ExecOutput::Array(select_suffix(&o, rhs))),
-            GrammarRule::Generator { exec, .. } => match exec {
-                ExecFn::Constant(exec) => exec().ok(),
-                _ => None,
-            },
-            GrammarRule::UnaryNumber { child, exec, .. } => match exec {
-                ExecFn::Constant(exec) => exec(child.consteval()?.value()).ok(),
-                _ => None,
-            },
-            GrammarRule::UnaryArray { child, exec, .. } => match exec {
-                ExecFn::Constant(exec) => exec(&child.consteval()?.expect_array().ok()?).ok(),
-                _ => None,
-            },
-            GrammarRule::Binary { lhs, rhs, exec, .. } => match exec {
-                ExecFn::Constant(exec) => {
-                    exec(lhs.consteval()?.value(), rhs.consteval()?.value()).ok()
-                }
-                _ => None,
-            },
+            GrammarRule::Select { lhs, rhs, .. } => {
+                lhs.consteval_indices(&select_indices(rhs, indices))
+            }
+            _ => Some(select_indices(&self.consteval()?.array(), indices)),
         }
+    }
+
+    fn flatten(&mut self, flattened_functions: &mut Vec<FlattenedFunction>) {
+        match self {
+            GrammarRule::Aggregate { children, .. } => children
+                .iter_mut()
+                .for_each(|c| c.flatten(flattened_functions)),
+            GrammarRule::UnaryArray {
+                child,
+                size,
+                operation,
+                ..
+            } => {
+                child.flatten(flattened_functions);
+                if child.len() == 1 && *size == 1 {
+                    flattened_functions.push(FlattenedFunction {
+                        operation: format!("{operation}"),
+                    });
+                    *self = mem::take(child)
+                }
+            }
+            GrammarRule::Select { lhs, .. } => lhs.flatten(flattened_functions),
+            GrammarRule::UnaryNumber { child, .. } => child.flatten(flattened_functions),
+            GrammarRule::Binary { lhs, rhs, .. } => {
+                lhs.flatten(flattened_functions);
+                rhs.flatten(flattened_functions);
+            }
+            _ => (),
+        };
     }
 
     fn consteval(&self) -> Option<ExecOutput> {
@@ -917,10 +963,9 @@ impl GrammarRule {
                 (v.len() == children.len()).then_some(ExecOutput::Array(v))
             }
             GrammarRule::Number { number, .. } => Some(ExecOutput::Value(*number)),
-            GrammarRule::Select { lhs, rhs, .. } => lhs
-                .consteval()
-                .and_then(|o| o.expect_array().ok())
-                .map(|o| ExecOutput::Array(select_suffix(&o, rhs))),
+            GrammarRule::Select { lhs, rhs, .. } => {
+                Some(ExecOutput::Array(lhs.consteval_indices(rhs)?))
+            }
             GrammarRule::Generator { exec, .. } => match exec {
                 ExecFn::Constant(exec) => exec().ok(),
                 _ => None,
@@ -929,9 +974,20 @@ impl GrammarRule {
                 ExecFn::Constant(exec) => exec(child.consteval()?.value()).ok(),
                 _ => None,
             },
-            GrammarRule::UnaryArray { child, exec, .. } => match exec {
+            GrammarRule::UnaryArray {
+                child, exec, size, ..
+            } => match exec {
                 ExecFn::Constant(exec) => exec(&child.consteval()?.expect_array().ok()?).ok(),
-                _ => None,
+                _ => {
+                    let output = child.consteval()?.expect_array().ok()?;
+                    Some(ExecOutput::Array(vec![
+                        output
+                            .windows(2)
+                            .all(|w| w[0] == w[1])
+                            .then(|| output[0])?;
+                        *size
+                    ]))
+                }
             },
             GrammarRule::Binary { lhs, rhs, exec, .. } => match exec {
                 ExecFn::Constant(exec) => {
@@ -951,6 +1007,8 @@ impl GrammarRule {
         if let Some(output) = self.consteval() {
             match self {
                 GrammarRule::Number { .. } => (),
+                GrammarRule::Generator { .. } => (),
+                GrammarRule::Aggregate { .. } => (),
                 _ => {
                     compiled_constants.push(CompiledConstant {
                         operation: self.to_string(),
@@ -1140,7 +1198,7 @@ impl GrammarRule {
                             .expect_array()?;
                         let rhs = rhs.clone();
                         Ok(
-                            ExecOutput::Array(select_suffix(lhs, &rhs)).with_line_detail(
+                            ExecOutput::Array(select_indices(lhs, &rhs)).with_line_detail(
                                 name,
                                 options.include_line_details.then(|| {
                                     format!("{} | {}", vi_to_string(lhs), vi_to_string(&rhs))
@@ -1210,6 +1268,12 @@ impl GrammarRule {
         let n = callstack.len();
         callstack.push(f);
         Either::Left(n)
+    }
+}
+
+impl Default for GrammarRule {
+    fn default() -> Self {
+        Self::num(0)
     }
 }
 
@@ -1629,6 +1693,7 @@ pub(crate) struct Grammar {
     compiled_string: String,
     callstack: Vec<StackFn>,
     compiled_constants: Vec<CompiledConstant>,
+    flattened_functions: Vec<FlattenedFunction>,
     search_space: BigUint,
     variable_count: usize,
     min_max: MinMax,
@@ -1638,7 +1703,7 @@ pub(crate) struct Grammar {
 impl Grammar {
     pub(crate) fn parse(input: &str) -> Result<Self, GrammarError> {
         let mut tokenizer = Tokenizer::new(input);
-        let result = expression(&mut tokenizer)?;
+        let mut result = expression(&mut tokenizer)?;
 
         if tokenizer.expended_count() < input.len() {
             return Err(GrammarError {
@@ -1651,6 +1716,10 @@ impl Grammar {
         let mut callstack: Vec<StackFn> = vec![];
         let mut search_space = BigUint::one();
         let mut compiled_constants: Vec<CompiledConstant> = vec![];
+        let mut flattened_functions: Vec<FlattenedFunction> = vec![];
+
+        result.flatten(&mut flattened_functions);
+
         let compiled_string = format!("{:#}", result);
         let min_max = result.min_max().unwrap().value();
         let variable_count = result.variable_count();
@@ -1660,6 +1729,7 @@ impl Grammar {
         Ok(Self {
             compiled_string,
             compiled_constants,
+            flattened_functions,
             callstack,
             search_space,
             variable_count,
@@ -1682,6 +1752,10 @@ impl Grammar {
 
     pub(crate) fn compiled_constants(&self) -> &[CompiledConstant] {
         &self.compiled_constants
+    }
+
+    pub(crate) fn flattened_functions(&self) -> &[FlattenedFunction] {
+        &self.flattened_functions
     }
 
     pub(crate) fn consteval(&self) -> Option<ExecOutput> {
@@ -2036,5 +2110,15 @@ mod tests {
         assert_eq!(rule.variable_count(), 0);
         assert!(rule.consteval().is_some());
         assert_eq!(rule.consteval().unwrap().value(), 7);
+
+        let x = "3p[[1..3|1,2,3]|0,0,0]";
+        let rule = parse(x);
+        assert!(rule.consteval().is_some());
+        assert_eq!(rule.consteval().unwrap().value(), 6);
+
+        let x = "3a(1,2,3)";
+        let rule = parse(x);
+        assert!(rule.consteval().is_some());
+        assert_eq!(rule.consteval().unwrap().value(), 6);
     }
 }

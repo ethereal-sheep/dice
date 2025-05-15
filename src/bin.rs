@@ -122,7 +122,7 @@ pub fn main() {
                         println!(
                             "{:>start_width$} {}",
                             "Notice".bold().bright_green(),
-                            "Script has no random variables"
+                            "Script was evaluated at compile time"
                         );
                         Some(output)
                     } else {
@@ -245,17 +245,34 @@ pub fn main() {
             match result {
                 Ok(dice) => {
                     if is_debug {
+                        let flattened_size = dice.flattened_functions().len();
+                        if flattened_size > 0 {
+                            println!(
+                                "{:>start_width$} {} {}{}",
+                                "Flattening".bold().bright_cyan(),
+                                flattened_size.bold().bright_yellow(),
+                                "function",
+                                if flattened_size == 1 { ' ' } else { 's' }
+                            );
+                            // for (i, flattened) in dice.flattened_functions().iter().enumerate() {
+                            //     println!(
+                            //         "{:>start_width$} {}",
+                            //         (i + 1).blue().bold(),
+                            //         flattened.operation,
+                            //     );
+                            // }
+                        }
                         let constants_size = dice.compiled_constants().len();
                         if constants_size > 0 {
-                            eprintln!(
+                            println!(
                                 "{:>start_width$} {} {}{}",
                                 "Optimizing".bold().bright_cyan(),
-                                dice.compiled_constants().len().bold().bright_yellow(),
+                                constants_size.bold().bright_yellow(),
                                 "constant",
                                 if constants_size == 1 { ' ' } else { 's' }
                             );
                             for (i, constant) in dice.compiled_constants().iter().enumerate() {
-                                eprintln!(
+                                println!(
                                     "{:>start_width$} {} => {}",
                                     (i + 1).blue().bold(),
                                     constant.operation,
@@ -274,7 +291,7 @@ pub fn main() {
                         println!(
                             "{:>start_width$} {}",
                             "Notice".bold().bright_green(),
-                            "Script has no random variables"
+                            "Script was evaluated at compile time"
                         );
                         println!(
                             "{:>start_width$} => {}",
@@ -321,13 +338,13 @@ pub fn main() {
                         let middle_width = 15;
 
                         if is_debug {
-                            eprintln!(
+                            println!(
                                 "{:>start_width$} {:<middle_width$} => {}",
                                 "Running".bold().bright_cyan(),
                                 "test of size",
                                 test_size.bold().bright_yellow()
                             );
-                            eprintln!(
+                            println!(
                                 "{:>start_width$} {:<middle_width$} => {}",
                                 "",
                                 "search space",
@@ -335,7 +352,7 @@ pub fn main() {
                                     .bold()
                                     .bright_yellow()
                             );
-                            eprintln!(
+                            println!(
                                 "{:>start_width$} {:<middle_width$} => ~{}",
                                 "",
                                 "step count",

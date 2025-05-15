@@ -21,6 +21,11 @@ pub struct CompiledConstant {
 }
 
 #[derive(Debug, Clone)]
+pub struct FlattenedFunction {
+    pub operation: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum ExecOutput {
     Value(i64),
     Array(Vec<i64>),
@@ -209,6 +214,10 @@ impl Dice {
 
     pub fn compiled_constants(&self) -> &[CompiledConstant] {
         self.grammar.compiled_constants()
+    }
+
+    pub fn flattened_functions(&self) -> &[FlattenedFunction] {
+        self.grammar.flattened_functions()
     }
 
     pub fn consteval(&self) -> Option<ExecOutput> {

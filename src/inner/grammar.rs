@@ -10,8 +10,11 @@ use num_bigint::BigUint;
 use num_traits::{FromPrimitive, One};
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
-use std::mem;
-use std::{rc::Rc, time::Instant};
+use std::ops::{Deref, DerefMut};
+use std::sync::{mpsc, Arc};
+use std::thread::{sleep, JoinHandle};
+use std::time::{Duration, Instant};
+use std::{mem, thread};
 use voracious_radix_sort::RadixSort;
 
 type ExecResultWithLineDetail = Result<(ExecOutput, Option<ExecLineDetail>), String>;
@@ -305,12 +308,20 @@ impl MinMaxOutput {
     }
 }
 
-pub(crate) enum ExecFn<R, C> {
+pub(crate) enum ExecFn<R, C>
+where
+    R: Send + Sync,
+    C: Send + Sync,
+{
     Random(usize, R),
     Constant(C),
 }
 
-impl<R, C> ExecFn<R, C> {
+impl<R, C> ExecFn<R, C>
+where
+    R: Send + Sync,
+    C: Send + Sync,
+{
     fn variable_count(&self) -> usize {
         match self {
             ExecFn::Random(variable_count, _) => *variable_count,
@@ -321,10 +332,10 @@ impl<R, C> ExecFn<R, C> {
 
 macro_rules! exec_fn {
     () => {
-        ExecFn<Box<dyn Fn(&mut dyn RngCore) -> ExecResult>, Box<dyn Fn() -> ExecResult>>
+        ExecFn<Box<dyn Fn(&mut dyn RngCore) -> ExecResult + Send + Sync>, Box<dyn Fn() -> ExecResult + Send + Sync>>
     };
     ($($T:ty), *) => {
-        ExecFn<Box<dyn Fn($($T), *, &mut dyn RngCore) -> ExecResult>, Box<dyn Fn($($T), *) -> ExecResult>>
+        ExecFn<Box<dyn Fn($($T), *, &mut dyn RngCore) -> ExecResult + Send + Sync>, Box<dyn Fn($($T), *) -> ExecResult + Send + Sync>>
     };
 }
 
@@ -339,10 +350,10 @@ macro_rules! min_max_fn {
 
 macro_rules! to_string_fn {
     () => {
-        Box<dyn Fn() -> String>
+        Box<dyn Fn() -> String + Send + Sync>
     };
     ($($T:ty), *) => {
-        Box<dyn Fn($($T), *) -> String>
+        Box<dyn Fn($($T), *) -> String + Send + Sync>
     };
 }
 
@@ -442,8 +453,11 @@ impl fmt::Display for GrammarRule {
     }
 }
 
-type ExecStackFn =
-    Rc<dyn Fn(&Vec<ExecOutput>, &mut dyn rand::RngCore, &RollOptions) -> ExecResultWithLineDetail>;
+type ExecStackFn = Arc<
+    dyn Fn(&Vec<ExecOutput>, &mut dyn rand::RngCore, &RollOptions) -> ExecResultWithLineDetail
+        + Send
+        + Sync,
+>;
 
 #[derive(Clone)]
 struct StackFn {
@@ -1031,7 +1045,7 @@ impl GrammarRule {
                     operation: "Aggregate".into(),
                     step_count,
                     output_size: 1,
-                    exec: Rc::new(move |stack: &Vec<ExecOutput>, _, _| {
+                    exec: Arc::new(move |stack: &Vec<ExecOutput>, _, _| {
                         Ok(ExecOutput::Array(
                             indices
                                 .iter()
@@ -1049,7 +1063,7 @@ impl GrammarRule {
                 operation: format!("{}", number),
                 step_count: 1,
                 output_size: 1,
-                exec: Rc::new(move |_: &Vec<ExecOutput>, _, _| {
+                exec: Arc::new(move |_: &Vec<ExecOutput>, _, _| {
                     Ok(ExecOutput::Value(number).with_line_detail(name, None))
                 }),
             },
@@ -1069,7 +1083,7 @@ impl GrammarRule {
                         operation: (to_string)(),
                         step_count,
                         output_size: size,
-                        exec: Rc::new(move |_: &Vec<ExecOutput>, rng, options| {
+                        exec: Arc::new(move |_: &Vec<ExecOutput>, rng, options| {
                             Ok(exec(rng)?.with_line_detail(
                                 name,
                                 options.include_line_details.then(&to_string),
@@ -1081,7 +1095,7 @@ impl GrammarRule {
                         operation: (to_string)(),
                         step_count,
                         output_size: size,
-                        exec: Rc::new(move |_: &Vec<ExecOutput>, _, options| {
+                        exec: Arc::new(move |_: &Vec<ExecOutput>, _, options| {
                             Ok(exec()?.with_line_detail(
                                 name,
                                 options.include_line_details.then(&to_string),
@@ -1106,7 +1120,7 @@ impl GrammarRule {
                         operation,
                         step_count: 1,
                         output_size: size,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
+                        exec: Arc::new(move |stack: &Vec<ExecOutput>, rng, options| {
                             let rhs = either
                                 .as_ref()
                                 .right_or_else(|i| stack.get(*i).unwrap())
@@ -1122,7 +1136,7 @@ impl GrammarRule {
                         operation,
                         step_count: 1,
                         output_size: size,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                        exec: Arc::new(move |stack: &Vec<ExecOutput>, _, options| {
                             let rhs = either
                                 .as_ref()
                                 .right_or_else(|i| stack.get(*i).unwrap())
@@ -1154,7 +1168,7 @@ impl GrammarRule {
                         operation,
                         step_count,
                         output_size: size,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
+                        exec: Arc::new(move |stack: &Vec<ExecOutput>, rng, options| {
                             let v = &either
                                 .as_ref()
                                 .right_or_else(|i| stack.get(*i).unwrap())
@@ -1170,7 +1184,7 @@ impl GrammarRule {
                         operation,
                         step_count,
                         output_size: size,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                        exec: Arc::new(move |stack: &Vec<ExecOutput>, _, options| {
                             let v = &either
                                 .as_ref()
                                 .right_or_else(|i| stack.get(*i).unwrap())
@@ -1191,7 +1205,7 @@ impl GrammarRule {
                     operation: "(...)|(...)".into(),
                     step_count,
                     output_size: step_count,
-                    exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                    exec: Arc::new(move |stack: &Vec<ExecOutput>, _, options| {
                         let lhs = &either
                             .as_ref()
                             .right_or_else(|i| stack.get(*i).unwrap())
@@ -1226,7 +1240,7 @@ impl GrammarRule {
                         operation,
                         step_count: 1,
                         output_size: size,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, rng, options| {
+                        exec: Arc::new(move |stack: &Vec<ExecOutput>, rng, options| {
                             let lhs = left_either
                                 .as_ref()
                                 .right_or_else(|i| stack.get(*i).unwrap())
@@ -1246,7 +1260,7 @@ impl GrammarRule {
                         operation,
                         step_count: 1,
                         output_size: size,
-                        exec: Rc::new(move |stack: &Vec<ExecOutput>, _, options| {
+                        exec: Arc::new(move |stack: &Vec<ExecOutput>, _, options| {
                             let lhs = left_either
                                 .as_ref()
                                 .right_or_else(|i| stack.get(*i).unwrap())
@@ -1813,8 +1827,44 @@ impl Grammar {
             },
             operations_count: self.callstack.len(),
             total_step_count: self.callstack.iter().map(|f| f.step_count).sum(),
+            step_index: 0,
             start_time,
         };
+
+        const THREAD_COUNT: usize = 10;
+        let test_size = options.test_size / THREAD_COUNT;
+        let threads = (0..THREAD_COUNT)
+            .into_iter()
+            .map(|k| {
+                let callstack = self.callstack.clone();
+                let exec_options = exec_options.clone();
+                thread::spawn(move || {
+                    let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; test_size];
+                    for (j, stack_fn) in callstack.iter().enumerate() {
+                        let stack_fn_start = Instant::now();
+                        for (i, stack) in stacks.iter_mut().enumerate() {
+                            info.operation_test_info.iteration_index = i;
+                            // if let Some(callback) = &options.interval_callback {
+                            //     (callback)(&info);
+                            // }
+                            // let (output, _) = (stack_fn.exec)(stack, rng, &exec_options)?;
+                            // stack.push(output);
+                        }
+                        // if options.is_debug {
+                        //     details.push(TestLineDetail {
+                        //         name: stack_fn.name,
+                        //         operation: stack_fn.operation.clone(),
+                        //         time_taken: stack_fn_start.elapsed(),
+                        //     });
+                        // }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for thread in threads {
+            thread.join().expect("Thread failed to join");
+        }
 
         let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; options.test_size];
         for (j, stack_fn) in self.callstack.iter().enumerate() {
@@ -1849,6 +1899,139 @@ impl Grammar {
 
         Ok(TestDetails {
             output: stacks.into_iter().map(|s| s[s.len() - 1].value()).collect(),
+            time_taken: start_time.elapsed(),
+            details,
+        })
+    }
+
+    pub(crate) fn test_mt(
+        &self,
+        rng: &mut (impl rand::Rng + Send + Sync + Clone + 'static),
+        options: TestOptions,
+    ) -> TestResultWithDetails {
+        let start_time = Instant::now();
+        let mut details: Vec<TestLineDetail> = vec![];
+        if let Some(output) = self.consteval() {
+            return Ok(TestDetails {
+                output: vec![output.value(); options.test_size],
+                time_taken: start_time.elapsed(),
+                details,
+            });
+        }
+        let exec_options = RollOptions {
+            include_line_details: false,
+        };
+
+        let mut info = OverallTestInfo {
+            operation_test_info: OperationTestInfo {
+                code: "",
+                name: "",
+                operation_index: 0,
+                iteration_index: 0,
+                step_count: 0,
+                operation_output_size: 0,
+                test_size: options.test_size,
+                start_time,
+            },
+            operations_count: self.callstack.len(),
+            total_step_count: self.callstack.iter().map(|f| f.step_count).sum(),
+            step_index: 0,
+            start_time,
+        };
+
+        struct LineTaskCompleted {
+            // thread_index: usize,
+            operation_index: usize,
+            // iteration_index: usize,
+        }
+
+        let (sx, rx) = mpsc::channel::<LineTaskCompleted>();
+
+        const THREAD_COUNT: usize = 10;
+        let threads = (0..THREAD_COUNT)
+            .into_iter()
+            .map(|_k| {
+                let test_size = options.test_size / THREAD_COUNT;
+                let sender = sx.clone();
+                let callstack = self.callstack.clone();
+                let exec_options = exec_options.clone();
+                let mut rng = rng.clone();
+                thread::spawn(move || -> Result<Vec<i64>, String> {
+                    // sleep(Duration::from_millis(100 * _k as u64));
+                    let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; test_size];
+                    for (j, stack_fn) in callstack.iter().enumerate() {
+                        for (_i, stack) in stacks.iter_mut().enumerate() {
+                            let (output, _) = (stack_fn.exec)(stack, &mut rng, &exec_options)?;
+                            stack.push(output);
+                            sender
+                                .send(LineTaskCompleted {
+                                    // thread_index: k,
+                                    operation_index: j,
+                                    // iteration_index: i,
+                                })
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok(stacks
+                        .into_iter()
+                        .map(|mut s| s.pop().unwrap().value())
+                        .collect())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut function_completion = vec![0; self.callstack.len()];
+        let mut function_start_time = vec![Instant::now(); self.callstack.len()];
+        loop {
+            let LineTaskCompleted {
+                operation_index, ..
+            } = rx.recv().map_err(|e| e.to_string())?;
+            let is_start_operation = function_completion[operation_index] == 0;
+            if is_start_operation {
+                function_start_time[operation_index] = Instant::now();
+            }
+
+            if let Some(callback) = &options.interval_callback {
+                info.operation_test_info = OperationTestInfo {
+                    code: &self.callstack[operation_index].name,
+                    name: &self.callstack[operation_index].operation,
+                    operation_index,
+                    iteration_index: function_completion[operation_index],
+                    step_count: self.callstack[operation_index].step_count,
+                    operation_output_size: self.callstack[operation_index].output_size,
+                    test_size: options.test_size,
+                    start_time: function_start_time[operation_index],
+                };
+                info.step_index += &self.callstack[operation_index].step_count;
+                (callback)(&info);
+            }
+
+            function_completion[operation_index] += 1;
+            let is_end_operation = function_completion[operation_index] == options.test_size;
+            let is_complete = *function_completion.last().unwrap() == options.test_size;
+
+            if is_end_operation {
+                if options.is_debug {
+                    details.push(TestLineDetail {
+                        name: &self.callstack[operation_index].name,
+                        operation: self.callstack[operation_index].operation.clone(),
+                        time_taken: function_start_time[operation_index].elapsed(),
+                    });
+                }
+            }
+
+            if is_complete {
+                break;
+            }
+        }
+
+        let mut output: Vec<i64> = vec![];
+        for thread in threads {
+            output.append(&mut thread.join().expect("Thread failed to join")?);
+        }
+
+        Ok(TestDetails {
+            output,
             time_taken: start_time.elapsed(),
             details,
         })

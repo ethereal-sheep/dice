@@ -1,12 +1,13 @@
 #![feature(assert_matches)]
 use core::fmt;
-use std::{cmp::Ordering, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::BTreeMap, rc::Rc};
 
 use clap::{arg, command, value_parser, Command};
-use dice::{Dice, ExecOutput, RollOptions, TestOptions};
+use dice::{Dice, ExecOutput, OperationTestInfo, OverallTestInfo, RollOptions, TestOptions};
 use num_bigint::BigUint;
 use owo_colors::OwoColorize;
 use rand::{rngs::SmallRng, SeedableRng};
+use voracious_radix_sort::RadixSort;
 
 pub fn main() {
     let matches = command!()
@@ -45,9 +46,9 @@ pub fn main() {
                 ))
                 .arg(
                     arg!(
-                        -s --size <N> "Tests the script N number of times;\nmin. 1, max. 1,000,000, default 100,000"
+                        -s --size <N> "Tests the script N number of times;\nmin. 1, max. 10,000,000, default 1,000,000"
                     )
-                    .value_parser(value_parser!(u64).range(1..=1_000_000)),
+                    .value_parser(value_parser!(u64).range(1..=10_000_000)),
                 )
                 .arg(
                     arg!(
@@ -303,13 +304,13 @@ pub fn main() {
                             *n as usize
                         } else {
                             if is_debug {
-                                eprintln!(
+                                println!(
                                     "{:>start_width$} defaulting test size to {}",
                                     "Notice".bold().bright_green(),
-                                    100000.bold().bright_yellow(),
+                                    1000000.bold().bright_yellow(),
                                 );
                             }
-                            100000
+                            1000000
                         };
 
                         let seed = matches.get_one::<u64>("seed");
@@ -373,89 +374,25 @@ pub fn main() {
                             );
                         }
 
-                        let options = TestOptions {
-                            is_debug,
-                            test_size: test_size as usize,
-                            interval_callback: Some(Rc::new(move |info| {
-                                let interval = if info.test_size() < 100 {
-                                    1
-                                } else {
-                                    info.test_size() / 100
-                                };
-
-                                let debug_message = if is_debug {
-                                    let message = format!(
-                                        "{:>start_width$} {:<middle_width$} =>",
-                                        info.current_test_info()
-                                            .operation_code()
-                                            .bright_yellow()
-                                            .bold(),
-                                        info.current_test_info().operation_name().bright_magenta()
-                                    );
-                                    Some(message)
-                                } else {
-                                    None
-                                };
-
-                                if info.current_test_info().iteration_index() % interval == 0 {
-                                    let interval =
-                                        if test_size < 100 { 1 } else { test_size / 100 };
-                                    if let Some(message) = &debug_message {
-                                        let percent = (info.current_test_info().iteration_index()
-                                            / interval)
-                                            + 1;
-                                        eprint!(
-                                            "\x1b[2K\r{message} {}▏{percent:>2}% | ~{} steps ",
-                                            progress_string(
-                                                info.test_size() as f64,
-                                                20,
-                                                info.current_test_info().iteration_index() as f64
-                                            ),
-                                            info.current_test_info().step_count()
-                                        );
+                        let interval_callback: Option<Rc<dyn Fn(&OverallTestInfo<'_>) + 'static>> =
+                            if is_debug {
+                                let interval_drawer = Rc::new(RefCell::new(TestProgressDrawer {
+                                    test_size,
+                                    interval_size: if test_size < 100 {
+                                        1
                                     } else {
-                                        let interval = if info.total_test_count() < 100 {
-                                            1
-                                        } else {
-                                            info.total_test_count() / 100
-                                        };
-                                        let percent = info.total_test_index() / interval + 1;
-                                        eprint!(
-                                    "\x1b[2K\r{:>start_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s ",
-                                    "Testing".bold().bright_cyan(),
-                                    info.current_test_info().operation_name().bright_magenta(),
-                                    progress_string(info.total_test_count() as f64, 20, info.total_test_index() as f64),
-                                    info.start_time().elapsed().as_secs_f32().bold()
-                                );
-                                    }
-                                }
+                                        test_size / 100
+                                    },
+                                    test_infos_map: BTreeMap::default(),
+                                    start_width,
+                                    middle_width,
+                                }));
+                                Some(Rc::new(move |info| {
+                                    let interval_drawer = interval_drawer.clone();
+                                    interval_drawer.borrow_mut().push(info.current_test_info());
 
-                                if info.current_test_info().is_last() {
-                                    if let Some(message) = &debug_message {
-                                        eprintln!(
-                                            "\x1b[2K\r{message} {:<5}ms | ~{} steps ",
-                                            info.current_test_info()
-                                                .start_time()
-                                                .elapsed()
-                                                .as_millis(),
-                                            info.current_test_info().step_count()
-                                        );
-                                    }
-                                }
-                                if info.is_last() {
-                                    if !is_debug {
-                                        eprint!("\x1b[2K\r");
-                                    }
-
-                                    eprintln!(
-                                        "{:>start_width$} {:.<middle_width$} => {:<6.2}s",
-                                        "Finished".bold().bright_green(),
-                                        "",
-                                        info.start_time().elapsed().as_secs_f32().bold()
-                                    );
-
-                                    if is_debug {
-                                        eprintln!(
+                                    if info.is_last() {
+                                        println!(
                                             "{:>start_width$} {:<middle_width$} => {:<5}ns",
                                             "",
                                             "avg. step time",
@@ -463,15 +400,42 @@ pub fn main() {
                                                 / (info.total_step_count() * test_size) as u128
                                         );
                                     }
-                                }
-                            })),
+                                }))
+                            } else {
+                                let interval_drawer =
+                                    Rc::new(RefCell::new(OtherTestProgressDrawer {
+                                        name: String::new(),
+                                        index: None,
+                                        seen: 0,
+                                        start_width,
+                                        middle_width,
+                                    }));
+                                Some(Rc::new(move |info| {
+                                    let interval_drawer = interval_drawer.clone();
+                                    interval_drawer.borrow_mut().push(info);
+                                    if info.is_last() {
+                                        print!("\x1b[2K\r");
+                                    }
+                                }))
+                            };
+
+                        let options = TestOptions {
+                            is_debug,
+                            test_size: test_size as usize,
+                            interval_callback,
                         };
 
                         let result = dice.test(&mut rng, options);
                         match result {
                             Ok(result) => {
+                                println!(
+                                    "{:>start_width$} {:.<middle_width$} => {:<6.2}s",
+                                    "Finished".bold().bright_green(),
+                                    "",
+                                    result.time_taken.as_secs_f32().bold()
+                                );
                                 if is_debug {
-                                    eprintln!(
+                                    println!(
                                         "{:>12} {} data points",
                                         "Bucketing".bright_cyan().bold(),
                                         result.output.len().bright_yellow().bold()
@@ -1370,7 +1334,7 @@ impl Percentiles {
             return None;
         }
 
-        data.sort();
+        data.voracious_sort();
         // let median = if data.len() % 2 == 0 {
         //     (data.get(data.len() / 2).unwrap() + data.get(data.len() / 2 - 1).unwrap()) as f64 / 2.0
         // } else {
@@ -1736,22 +1700,125 @@ impl Percentiles {
     }
 }
 
-// struct Statistics {
-//     mean: f64,
-//     median: i64,
-//     mode: i64,
-// }
+struct TestProgress {
+    name: String,
+    code: String,
+    index: usize,
+    step_count: usize,
+}
 
-// impl Statistics {
-//     fn from_data(mut data: Vec<i64>) -> Self {
-//         data.sort();
-//         Self {
-//             buckets: Buckets::from_data(&data),
-//             sorted_data: data,
-//             reference: None,
-//         }
-//     }
-// }
+const PROGRESS_INTERVAL_COUNT: usize = 20;
+
+struct TestProgressDrawer {
+    test_size: usize,
+    interval_size: usize,
+    test_infos_map: BTreeMap<usize, TestProgress>,
+    start_width: usize,
+    middle_width: usize,
+}
+
+impl TestProgressDrawer {
+    pub fn push(&mut self, info: &OperationTestInfo) {
+        let start_width = self.start_width;
+        let middle_width = self.middle_width;
+        let last_size = self.test_infos_map.len();
+        self.test_infos_map
+            .entry(info.operation_index())
+            .or_insert(TestProgress {
+                name: info.operation_name().into(),
+                code: info.operation_code().into(),
+                index: 0,
+                step_count: info.step_count(),
+            })
+            .index = info.iteration_index();
+
+        if self.interval_size == 0
+            || info.is_last()
+            || info.iteration_index() % self.interval_size == 0
+        {
+            for i in 0..last_size {
+                if i != 0 {
+                    eprint!("\x1b[1F");
+                }
+                eprint!("\x1b[2K\r")
+            }
+
+            if info.is_last() {
+                eprintln!(
+                    "{:>start_width$} {:<middle_width$} => {:PROGRESS_INTERVAL_COUNT$}▏100%| ~{} steps",
+                    info.operation_code().bright_yellow().bold(),
+                    info.operation_name().bright_magenta(),
+                    format!("{:<5}ms", info.start_time().elapsed().as_millis()),
+                    info.step_count()
+                );
+                self.test_infos_map.remove(&info.operation_index());
+            }
+
+            for (i, (_, progress)) in self.test_infos_map.iter().enumerate() {
+                let percent = (progress.index / self.interval_size) + 1;
+                if i != 0 {
+                    eprint!("\n");
+                }
+
+                eprint!(
+                    "{:>start_width$} {:<middle_width$} => {}▏{percent:>3}%| ~{} steps",
+                    progress.code.bright_yellow().bold(),
+                    progress.name.bright_magenta(),
+                    progress_string(
+                        self.test_size as f64,
+                        PROGRESS_INTERVAL_COUNT,
+                        progress.index as f64
+                    ),
+                    progress.step_count,
+                );
+            }
+        }
+    }
+}
+
+struct OtherTestProgressDrawer {
+    name: String,
+    index: Option<usize>,
+    seen: usize,
+    start_width: usize,
+    middle_width: usize,
+}
+
+impl OtherTestProgressDrawer {
+    pub fn push(&mut self, info: &OverallTestInfo) {
+        let start_width = self.start_width;
+        let middle_width = self.middle_width;
+
+        let interval = if info.total_step_count() * info.test_size() < 100 {
+            1
+        } else {
+            info.total_step_count() * info.test_size() / 100
+        };
+
+        if self.index.is_none() || info.current_test_info().operation_index() > self.index.unwrap()
+        {
+            self.name = info.current_test_info().operation_name().into();
+            self.index = info.current_test_info().operation_index().into();
+        }
+
+        let percent = info.step_index() / interval + 1;
+        if percent > self.seen {
+            self.seen = percent;
+            eprint!(
+                "\x1b[2K\r{:>start_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s ",
+                "Testing".bold().bright_cyan(),
+                self.name.bright_magenta(),
+                progress_string(
+                    (info.total_step_count() * info.test_size()) as f64,
+                    20,
+                    (info.step_index() - 1) as f64
+                ),
+                // "",
+                info.start_time().elapsed().as_secs_f32().bold()
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

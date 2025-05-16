@@ -137,6 +137,7 @@ pub struct OverallTestInfo<'a> {
     operation_test_info: OperationTestInfo<'a>,
     operations_count: usize,
     total_step_count: usize,
+    step_index: usize,
     start_time: Instant,
 }
 
@@ -149,6 +150,9 @@ impl<'a> OverallTestInfo<'a> {
     }
     pub fn total_step_count(&self) -> usize {
         self.total_step_count
+    }
+    pub fn step_index(&self) -> usize {
+        self.step_index
     }
     pub fn test_size(&self) -> usize {
         self.operation_test_info.test_size
@@ -230,10 +234,10 @@ impl Dice {
 
     pub fn test(
         &self,
-        rng: &mut (impl rand::Rng + Clone),
+        rng: &mut (impl rand::Rng + Send + Sync + Clone + 'static),
         options: TestOptions,
     ) -> TestResultWithDetails {
-        self.grammar.test(rng, options)
+        self.grammar.test_mt(rng, options)
     }
 }
 
@@ -253,7 +257,7 @@ impl fmt::Display for Dice {
 
 #[cfg(test)]
 mod tests {
-    use rand::thread_rng;
+    use rand::{rngs::SmallRng, thread_rng, SeedableRng};
 
     use super::*;
 
@@ -275,7 +279,7 @@ mod tests {
                 }
 
                 let result = dice.test(
-                    &mut thread_rng(),
+                    &mut SmallRng::from_entropy(),
                     TestOptions {
                         is_debug: true,
                         test_size: 100,

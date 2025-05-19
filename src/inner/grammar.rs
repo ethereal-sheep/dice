@@ -10,10 +10,8 @@ use num_bigint::BigUint;
 use num_traits::{FromPrimitive, One};
 use owo_colors::OwoColorize;
 use rand::{seq::SliceRandom, Rng, RngCore};
-use std::ops::{Deref, DerefMut};
 use std::sync::{mpsc, Arc};
-use std::thread::{sleep, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::{mem, thread};
 use voracious_radix_sort::RadixSort;
 
@@ -928,7 +926,7 @@ impl GrammarRule {
                     .iter()
                     .map(|c| c.consteval().map(|o| o.value()))
                     .collect::<Vec<_>>();
-                let v: Vec<i64> = select_indices(&v, &indices).into_iter().flatten().collect();
+                let v: Vec<i64> = select_indices(&v, indices).into_iter().flatten().collect();
                 (v.len() == indices.len()).then_some(v)
             }
             GrammarRule::Select { lhs, rhs, .. } => {
@@ -952,7 +950,7 @@ impl GrammarRule {
                 child.flatten(flattened_functions);
                 if child.len() == 1 && *size == 1 {
                     flattened_functions.push(FlattenedFunction {
-                        operation: format!("{operation}"),
+                        operation: operation.to_string(),
                     });
                     *self = mem::take(child)
                 }
@@ -1831,41 +1829,6 @@ impl Grammar {
             start_time,
         };
 
-        const THREAD_COUNT: usize = 10;
-        let test_size = options.test_size / THREAD_COUNT;
-        let threads = (0..THREAD_COUNT)
-            .into_iter()
-            .map(|k| {
-                let callstack = self.callstack.clone();
-                let exec_options = exec_options.clone();
-                thread::spawn(move || {
-                    let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; test_size];
-                    for (j, stack_fn) in callstack.iter().enumerate() {
-                        let stack_fn_start = Instant::now();
-                        for (i, stack) in stacks.iter_mut().enumerate() {
-                            info.operation_test_info.iteration_index = i;
-                            // if let Some(callback) = &options.interval_callback {
-                            //     (callback)(&info);
-                            // }
-                            // let (output, _) = (stack_fn.exec)(stack, rng, &exec_options)?;
-                            // stack.push(output);
-                        }
-                        // if options.is_debug {
-                        //     details.push(TestLineDetail {
-                        //         name: stack_fn.name,
-                        //         operation: stack_fn.operation.clone(),
-                        //         time_taken: stack_fn_start.elapsed(),
-                        //     });
-                        // }
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-
-        for thread in threads {
-            thread.join().expect("Thread failed to join");
-        }
-
         let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; options.test_size];
         for (j, stack_fn) in self.callstack.iter().enumerate() {
             info.operation_test_info = OperationTestInfo {
@@ -1949,7 +1912,6 @@ impl Grammar {
 
         const THREAD_COUNT: usize = 10;
         let threads = (0..THREAD_COUNT)
-            .into_iter()
             .map(|_k| {
                 let test_size = options.test_size / THREAD_COUNT;
                 let sender = sx.clone();
@@ -1960,7 +1922,7 @@ impl Grammar {
                     // sleep(Duration::from_millis(100 * _k as u64));
                     let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; test_size];
                     for (j, stack_fn) in callstack.iter().enumerate() {
-                        for (_i, stack) in stacks.iter_mut().enumerate() {
+                        for stack in stacks.iter_mut() {
                             let (output, _) = (stack_fn.exec)(stack, &mut rng, &exec_options)?;
                             stack.push(output);
                             sender
@@ -1993,7 +1955,7 @@ impl Grammar {
 
             if let Some(callback) = &options.interval_callback {
                 info.operation_test_info = OperationTestInfo {
-                    code: &self.callstack[operation_index].name,
+                    code: self.callstack[operation_index].name,
                     name: &self.callstack[operation_index].operation,
                     operation_index,
                     iteration_index: function_completion[operation_index],
@@ -2010,14 +1972,12 @@ impl Grammar {
             let is_end_operation = function_completion[operation_index] == options.test_size;
             let is_complete = *function_completion.last().unwrap() == options.test_size;
 
-            if is_end_operation {
-                if options.is_debug {
-                    details.push(TestLineDetail {
-                        name: &self.callstack[operation_index].name,
-                        operation: self.callstack[operation_index].operation.clone(),
-                        time_taken: function_start_time[operation_index].elapsed(),
-                    });
-                }
+            if is_end_operation && options.is_debug {
+                details.push(TestLineDetail {
+                    name: self.callstack[operation_index].name,
+                    operation: self.callstack[operation_index].operation.clone(),
+                    time_taken: function_start_time[operation_index].elapsed(),
+                });
             }
 
             if is_complete {

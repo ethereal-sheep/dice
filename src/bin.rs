@@ -74,6 +74,11 @@ pub fn main() {
                     )
                     .value_parser(value_parser!(i64)).allow_hyphen_values(true).allow_negative_numbers(true),
                 )
+                .arg(
+                    arg!(
+                        -t --threads "Use threads to speed up calculations"
+                    )
+                )
                 .arg(arg!(
                     --experimental "Allows experimental features; might not work correctly!"
                 )),
@@ -121,9 +126,8 @@ pub fn main() {
                     }
                     let result = if let Some(output) = dice.consteval() {
                         println!(
-                            "{:>start_width$} {}",
-                            "Notice".bold().bright_green(),
-                            "Script was evaluated at compile time"
+                            "{:>start_width$} Script was evaluated at compile time",
+                            "Notice".bold().bright_green()
                         );
                         Some(output)
                     } else {
@@ -226,6 +230,7 @@ pub fn main() {
         }
     } else if let Some(matches) = matches.subcommand_matches("test") {
         let is_debug = matches.get_flag("debug");
+        let use_threads = matches.get_flag("threads");
         if is_debug {
             if !matches.get_flag("nologo") {
                 println!("{:>start_width$}", Logo {});
@@ -249,10 +254,9 @@ pub fn main() {
                         let flattened_size = dice.flattened_functions().len();
                         if flattened_size > 0 {
                             println!(
-                                "{:>start_width$} {} {}{}",
+                                "{:>start_width$} {} function{}",
                                 "Flattening".bold().bright_cyan(),
                                 flattened_size.bold().bright_yellow(),
-                                "function",
                                 if flattened_size == 1 { ' ' } else { 's' }
                             );
                             // for (i, flattened) in dice.flattened_functions().iter().enumerate() {
@@ -266,10 +270,9 @@ pub fn main() {
                         let constants_size = dice.compiled_constants().len();
                         if constants_size > 0 {
                             println!(
-                                "{:>start_width$} {} {}{}",
+                                "{:>start_width$} {} constant{}",
                                 "Optimizing".bold().bright_cyan(),
                                 constants_size.bold().bright_yellow(),
-                                "constant",
                                 if constants_size == 1 { ' ' } else { 's' }
                             );
                             for (i, constant) in dice.compiled_constants().iter().enumerate() {
@@ -290,9 +293,8 @@ pub fn main() {
 
                     if let Some(output) = dice.consteval() {
                         println!(
-                            "{:>start_width$} {}",
-                            "Notice".bold().bright_green(),
-                            "Script was evaluated at compile time"
+                            "{:>start_width$} Script was evaluated at compile time",
+                            "Notice".bold().bright_green()
                         );
                         println!(
                             "{:>start_width$} => {}",
@@ -374,19 +376,23 @@ pub fn main() {
                             );
                         }
 
-                        let interval_callback: Option<Rc<dyn Fn(&OverallTestInfo<'_>) + 'static>> =
-                            if is_debug {
-                                let interval_drawer = Rc::new(RefCell::new(TestProgressDrawer {
-                                    test_size,
-                                    interval_size: if test_size < 100 {
-                                        1
-                                    } else {
-                                        test_size / 100
-                                    },
-                                    test_infos_map: BTreeMap::default(),
-                                    start_width,
-                                    middle_width,
-                                }));
+                        let options = TestOptions {
+                            is_debug,
+                            use_threads,
+                            test_size: test_size as usize,
+                            interval_callback: if is_debug {
+                                let interval_drawer =
+                                    Rc::new(RefCell::new(DebugTestProgressDrawer {
+                                        test_size,
+                                        interval_size: if test_size < 100 {
+                                            1
+                                        } else {
+                                            test_size / 100
+                                        },
+                                        test_infos_map: BTreeMap::default(),
+                                        start_width,
+                                        middle_width,
+                                    }));
                                 Some(Rc::new(move |info| {
                                     let interval_drawer = interval_drawer.clone();
                                     interval_drawer.borrow_mut().push(info.current_test_info());
@@ -403,7 +409,7 @@ pub fn main() {
                                 }))
                             } else {
                                 let interval_drawer =
-                                    Rc::new(RefCell::new(OtherTestProgressDrawer {
+                                    Rc::new(RefCell::new(SimpleTestProgressDrawer {
                                         name: String::new(),
                                         index: None,
                                         seen: 0,
@@ -417,12 +423,7 @@ pub fn main() {
                                         print!("\x1b[2K\r");
                                     }
                                 }))
-                            };
-
-                        let options = TestOptions {
-                            is_debug,
-                            test_size: test_size as usize,
-                            interval_callback,
+                            },
                         };
 
                         let result = dice.test(&mut rng, options);
@@ -1709,7 +1710,7 @@ struct TestProgress {
 
 const PROGRESS_INTERVAL_COUNT: usize = 20;
 
-struct TestProgressDrawer {
+struct DebugTestProgressDrawer {
     test_size: usize,
     interval_size: usize,
     test_infos_map: BTreeMap<usize, TestProgress>,
@@ -1717,7 +1718,7 @@ struct TestProgressDrawer {
     middle_width: usize,
 }
 
-impl TestProgressDrawer {
+impl DebugTestProgressDrawer {
     pub fn push(&mut self, info: &OperationTestInfo) {
         let start_width = self.start_width;
         let middle_width = self.middle_width;
@@ -1757,7 +1758,7 @@ impl TestProgressDrawer {
             for (i, (_, progress)) in self.test_infos_map.iter().enumerate() {
                 let percent = (progress.index / self.interval_size) + 1;
                 if i != 0 {
-                    eprint!("\n");
+                    eprintln!();
                 }
 
                 eprint!(
@@ -1776,7 +1777,7 @@ impl TestProgressDrawer {
     }
 }
 
-struct OtherTestProgressDrawer {
+struct SimpleTestProgressDrawer {
     name: String,
     index: Option<usize>,
     seen: usize,
@@ -1784,7 +1785,7 @@ struct OtherTestProgressDrawer {
     middle_width: usize,
 }
 
-impl OtherTestProgressDrawer {
+impl SimpleTestProgressDrawer {
     pub fn push(&mut self, info: &OverallTestInfo) {
         let start_width = self.start_width;
         let middle_width = self.middle_width;

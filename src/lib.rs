@@ -180,6 +180,7 @@ pub type TestIntervalCallback = dyn Fn(&OverallTestInfo);
 #[derive(Clone)]
 pub struct TestOptions {
     pub is_debug: bool,
+    pub use_threads: bool,
     pub test_size: usize,
     pub interval_callback: Option<Rc<TestIntervalCallback>>,
 }
@@ -237,7 +238,11 @@ impl Dice {
         rng: &mut (impl rand::Rng + Send + Sync + Clone + 'static),
         options: TestOptions,
     ) -> TestResultWithDetails {
-        self.grammar.test_mt(rng, options)
+        if options.use_threads {
+            self.grammar.test_mt(rng, options)
+        } else {
+            self.grammar.test(rng, options)
+        }
     }
 }
 
@@ -284,6 +289,7 @@ mod tests {
                         is_debug: true,
                         test_size: 100,
                         interval_callback: None,
+                        use_threads: true,
                     },
                 );
                 match result {

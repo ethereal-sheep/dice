@@ -6,6 +6,7 @@ use crate::{
 };
 use core::fmt;
 use either::Either;
+use itertools::{kmerge, Itertools};
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, One};
 use owo_colors::OwoColorize;
@@ -21,20 +22,14 @@ fn vi_to_string(v: &[i64]) -> String {
     const MAX_CHARS: usize = 30;
     let mut string = format!(
         "({})",
-        v.iter()
-            .map(i64::to_string)
-            .intersperse(", ".into())
-            .collect::<String>()
+        Itertools::intersperse(v.iter().map(i64::to_string), ", ".into()).collect::<String>()
     );
 
     for i in (1..=3).rev() {
         if string.len() > MAX_CHARS {
             string = format!(
                 "({}, ({} more..))",
-                v.iter()
-                    .take(i)
-                    .map(i64::to_string)
-                    .intersperse(", ".into())
+                Itertools::intersperse(v.iter().take(i).map(i64::to_string), ", ".into())
                     .collect::<String>(),
                 v.len() - i,
             );
@@ -52,9 +47,7 @@ fn vgr_to_string(v: &[GrammarRule]) -> String {
     const MAX_CHARS: usize = 30;
     let mut string = format!(
         "({})",
-        v.iter()
-            .map(GrammarRule::to_string)
-            .intersperse(", ".into())
+        Itertools::intersperse(v.iter().map(GrammarRule::to_string), ", ".into())
             .collect::<String>()
     );
 
@@ -62,10 +55,7 @@ fn vgr_to_string(v: &[GrammarRule]) -> String {
         if string.len() > MAX_CHARS {
             string = format!(
                 "({}, ({} more..))",
-                v.iter()
-                    .take(i)
-                    .map(GrammarRule::to_string)
-                    .intersperse(", ".into())
+                Itertools::intersperse(v.iter().take(i).map(GrammarRule::to_string), ", ".into())
                     .collect::<String>(),
                 v.len() - i,
             );
@@ -133,11 +123,9 @@ impl ExecOutput {
     pub fn raw_string(&self) -> String {
         match &self {
             ExecOutput::Value(i) => i.to_string(),
-            ExecOutput::Array(v) => v
-                .iter()
-                .map(i64::to_string)
-                .intersperse(",".into())
-                .collect::<String>(),
+            ExecOutput::Array(v) => {
+                Itertools::intersperse(v.iter().map(i64::to_string), ",".into()).collect::<String>()
+            }
         }
     }
 
@@ -1860,8 +1848,10 @@ impl Grammar {
             }
         }
 
+        let mut output: Vec<i64> = stacks.into_iter().map(|s| s[s.len() - 1].value()).collect();
+        output.voracious_sort();
         Ok(TestDetails {
-            output: stacks.into_iter().map(|s| s[s.len() - 1].value()).collect(),
+            output,
             time_taken: start_time.elapsed(),
             details,
         })
@@ -1934,10 +1924,12 @@ impl Grammar {
                                 .map_err(|e| e.to_string())?;
                         }
                     }
-                    Ok(stacks
+                    let mut output = stacks
                         .into_iter()
                         .map(|mut s| s.pop().unwrap().value())
-                        .collect())
+                        .collect::<Vec<_>>();
+                    output.voracious_sort();
+                    Ok(output)
                 })
             })
             .collect::<Vec<_>>();
@@ -1985,10 +1977,20 @@ impl Grammar {
             }
         }
 
-        let mut output: Vec<i64> = vec![];
-        for thread in threads {
-            output.append(&mut thread.join().expect("Thread failed to join")?);
-        }
+        let astart_time = Instant::now();
+        let output = kmerge(
+            threads
+                .into_iter()
+                .map(|h| h.join().expect("Thread failed to join"))
+                .process_results(|i| i.collect::<Vec<_>>())?,
+        )
+        .collect::<Vec<_>>();
+
+        println!(
+            "{:>12} Time taken: {:?}ms",
+            "Notice".bold().bright_green(),
+            astart_time.elapsed().as_millis()
+        );
 
         Ok(TestDetails {
             output,

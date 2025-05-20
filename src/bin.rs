@@ -7,7 +7,6 @@ use dice::{Dice, ExecOutput, OperationTestInfo, OverallTestInfo, RollOptions, Te
 use num_bigint::BigUint;
 use owo_colors::OwoColorize;
 use rand::{rngs::SmallRng, SeedableRng};
-use voracious_radix_sort::RadixSort;
 
 pub fn main() {
     let matches = command!()
@@ -452,7 +451,7 @@ pub fn main() {
                                     is_debug,
                                 );
 
-                                let percentiles = Percentiles::from_data(result.output).unwrap();
+                                let percentiles = Percentiles::from_data(&result.output).unwrap();
                                 percentiles.print_table(start_width, reference, is_debug);
                             }
                             Err(err) => {
@@ -1330,12 +1329,11 @@ impl PercentileCompare {
 }
 
 impl Percentiles {
-    fn from_data(mut data: Vec<i64>) -> Option<Self> {
+    fn from_data(data: &[i64]) -> Option<Self> {
         if data.is_empty() {
             return None;
         }
 
-        data.voracious_sort();
         // let median = if data.len() % 2 == 0 {
         //     (data.get(data.len() / 2).unwrap() + data.get(data.len() / 2 - 1).unwrap()) as f64 / 2.0
         // } else {
@@ -1847,7 +1845,7 @@ mod tests {
 
     #[test]
     fn test_percentiles_get_by_value() {
-        let percentiles = Percentiles::from_data(vec![1, 1, 3, 3, 4, 4, 5, 5]).unwrap();
+        let percentiles = Percentiles::from_data(&[1, 1, 3, 3, 4, 4, 5, 5]).unwrap();
         assert_matches!(
             percentiles.get_percentile_by_value(1),
             Percentile {
@@ -1907,8 +1905,7 @@ mod tests {
 
     #[test]
     fn test_percentiles_get_gt_by_percentage() {
-        let percentiles: Percentiles =
-            Percentiles::from_data(vec![1, 1, 3, 3, 4, 4, 5, 5]).unwrap();
+        let percentiles: Percentiles = Percentiles::from_data(&[1, 1, 3, 3, 4, 4, 5, 5]).unwrap();
         assert_matches!(
             percentiles.get_percentile_by_percentage(0, PercentileCompare::Greater),
             Some(Percentile {
@@ -1961,8 +1958,7 @@ mod tests {
 
     #[test]
     fn test_percentiles_get_lt_by_percentage() {
-        let percentiles: Percentiles =
-            Percentiles::from_data(vec![1, 1, 3, 3, 4, 4, 5, 5]).unwrap();
+        let percentiles: Percentiles = Percentiles::from_data(&[1, 1, 3, 3, 4, 4, 5, 5]).unwrap();
         assert_matches!(
             percentiles.get_percentile_by_percentage(0, PercentileCompare::Less),
             Some(Percentile {
@@ -2015,7 +2011,7 @@ mod tests {
 
     #[test]
     fn test_percentile_percentages() {
-        let percentiles = Percentiles::from_data(vec![0, 2, 4, 6, 7, 8, 10, 12, 14, 20]).unwrap();
+        let percentiles = Percentiles::from_data(&[0, 2, 4, 6, 7, 8, 10, 12, 14, 20]).unwrap();
         let percentile = percentiles.get_percentile_by_value(9);
         println!("{:?}", percentile.greater_than_percentage());
         println!("{:?}", percentile.less_than_percentage());

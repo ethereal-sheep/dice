@@ -258,13 +258,6 @@ pub fn main() {
                                 flattened_size.bold().bright_yellow(),
                                 if flattened_size == 1 { ' ' } else { 's' }
                             );
-                            // for (i, flattened) in dice.flattened_functions().iter().enumerate() {
-                            //     println!(
-                            //         "{:>start_width$} {}",
-                            //         (i + 1).blue().bold(),
-                            //         flattened.operation,
-                            //     );
-                            // }
                         }
                         let constants_size = dice.compiled_constants().len();
                         if constants_size > 0 {
@@ -402,7 +395,7 @@ pub fn main() {
                                             "",
                                             "avg. step time",
                                             info.start_time().elapsed().as_nanos()
-                                                / (info.total_step_count() * test_size) as u128
+                                                / (info.step_count() * test_size) as u128
                                         );
                                     }
                                 }))
@@ -1788,29 +1781,22 @@ impl SimpleTestProgressDrawer {
         let start_width = self.start_width;
         let middle_width = self.middle_width;
 
-        let interval = if info.total_step_count() * info.test_size() < 100 {
-            1
-        } else {
-            info.total_step_count() * info.test_size() / 100
-        };
-
         if self.index.is_none() || info.current_test_info().operation_index() > self.index.unwrap()
         {
             self.name = info.current_test_info().operation_name().into();
             self.index = info.current_test_info().operation_index().into();
         }
-
-        let percent = info.step_index() / interval + 1;
-        if percent > self.seen {
-            self.seen = percent;
+        let percent = info.iteration_index() * 100 / info.total_test_count();
+        if (info.start_time().elapsed().as_millis() / 16) as usize > self.seen {
+            self.seen = (info.start_time().elapsed().as_millis() / 16) as usize;
             eprint!(
                 "\x1b[2K\r{:>start_width$} {:<middle_width$} => {}▏{percent:3}% {:<6.2}s ",
                 "Testing".bold().bright_cyan(),
                 self.name.bright_magenta(),
                 progress_string(
-                    (info.total_step_count() * info.test_size()) as f64,
-                    20,
-                    (info.step_index() - 1) as f64
+                    (info.total_test_count()) as f64,
+                    PROGRESS_INTERVAL_COUNT,
+                    (info.iteration_index()) as f64
                 ),
                 // "",
                 info.start_time().elapsed().as_secs_f32().bold()

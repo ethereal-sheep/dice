@@ -1812,8 +1812,8 @@ impl Grammar {
                 start_time,
             },
             operations_count: self.callstack.len(),
-            total_step_count: self.callstack.iter().map(|f| f.step_count).sum(),
-            step_index: 0,
+            step_count: self.callstack.iter().map(|f| f.step_count).sum(),
+            iteration_index: 0,
             start_time,
         };
 
@@ -1833,6 +1833,7 @@ impl Grammar {
             let stack_fn_start = Instant::now();
             for (i, stack) in stacks.iter_mut().enumerate() {
                 info.operation_test_info.iteration_index = i;
+                info.iteration_index += 1;
                 if let Some(callback) = &options.interval_callback {
                     (callback)(&info);
                 }
@@ -1887,8 +1888,8 @@ impl Grammar {
                 start_time,
             },
             operations_count: self.callstack.len(),
-            total_step_count: self.callstack.iter().map(|f| f.step_count).sum(),
-            step_index: 0,
+            step_count: self.callstack.iter().map(|f| f.step_count).sum(),
+            iteration_index: 0,
             start_time,
         };
 
@@ -1909,7 +1910,6 @@ impl Grammar {
                 let exec_options = exec_options.clone();
                 let mut rng = rng.clone();
                 thread::spawn(move || -> Result<Vec<i64>, String> {
-                    // sleep(Duration::from_millis(100 * _k as u64));
                     let mut stacks: Vec<Vec<ExecOutput>> = vec![vec![]; test_size];
                     for (j, stack_fn) in callstack.iter().enumerate() {
                         for stack in stacks.iter_mut() {
@@ -1917,9 +1917,7 @@ impl Grammar {
                             stack.push(output);
                             sender
                                 .send(LineTaskCompleted {
-                                    // thread_index: k,
                                     operation_index: j,
-                                    // iteration_index: i,
                                 })
                                 .map_err(|e| e.to_string())?;
                         }
@@ -1956,7 +1954,7 @@ impl Grammar {
                     test_size: options.test_size,
                     start_time: function_start_time[operation_index],
                 };
-                info.step_index += &self.callstack[operation_index].step_count;
+                info.iteration_index += 1;
                 (callback)(&info);
             }
 

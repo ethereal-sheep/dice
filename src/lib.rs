@@ -135,8 +135,8 @@ impl<'a> OperationTestInfo<'a> {
 pub struct OverallTestInfo<'a> {
     operation_test_info: OperationTestInfo<'a>,
     operations_count: usize,
-    total_step_count: usize,
-    step_index: usize,
+    step_count: usize,
+    iteration_index: usize,
     start_time: Instant,
 }
 
@@ -147,11 +147,11 @@ impl<'a> OverallTestInfo<'a> {
     pub fn operations_count(&self) -> usize {
         self.operations_count
     }
-    pub fn total_step_count(&self) -> usize {
-        self.total_step_count
+    pub fn step_count(&self) -> usize {
+        self.step_count
     }
-    pub fn step_index(&self) -> usize {
-        self.step_index
+    pub fn iteration_index(&self) -> usize {
+        self.iteration_index
     }
     pub fn test_size(&self) -> usize {
         self.operation_test_info.test_size
@@ -159,18 +159,14 @@ impl<'a> OverallTestInfo<'a> {
     pub fn start_time(&self) -> Instant {
         self.start_time
     }
-    pub fn total_test_index(&self) -> usize {
-        self.current_test_info().operation_index() * self.test_size()
-            + self.current_test_info().iteration_index()
-    }
     pub fn total_test_count(&self) -> usize {
         self.operations_count() * self.test_size()
     }
     pub fn is_first(&self) -> bool {
-        self.total_test_index() == 0
+        self.iteration_index() == 0
     }
     pub fn is_last(&self) -> bool {
-        self.total_test_index() == self.total_test_count() - 1
+        self.iteration_index() == self.total_test_count()
     }
 }
 

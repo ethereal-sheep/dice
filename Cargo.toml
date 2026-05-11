@@ -25,5 +25,6 @@ num-format = { version = "0.4.3", features = ["with-num-bigint"] }
 num-traits = "0.2.19"
 owo-colors = "4.1.0"
 rand = { version = "0.8.5", features = ["small_rng"] }
+rustyline = "14"
 termsize = "0.1.9"
 voracious_radix_sort = "1.2.0"

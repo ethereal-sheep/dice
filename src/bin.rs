@@ -1,5 +1,7 @@
 #![feature(assert_matches)]
 use core::fmt;
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 use std::{cell::RefCell, cmp::Ordering, collections::BTreeMap, rc::Rc};
 
 use clap::{arg, command, value_parser, Command};
@@ -89,6 +91,24 @@ pub fn main() {
                 ))
                 .arg(arg!(
                     --experimental "Show experimental features in documentation"
+                )),
+        ).subcommand(
+            Command::new("repl")
+                .about("Starts an interactive interpreter for dice scripts")
+                .arg(arg!(
+                    -d --debug "Turn debugging information on"
+                ))
+                .arg(arg!(
+                    --nologo "Suppresses logo"
+                ))
+                .arg(
+                    arg!(
+                        --seed <SEED> "Seeds the PRNG with SEED"
+                    )
+                    .value_parser(value_parser!(u64)),
+                )
+                .arg(arg!(
+                    --raw "Prints a delimetered list of values if result is an array"
                 )),
         )
         .get_matches();
@@ -597,6 +617,131 @@ pub fn main() {
                 ),
             ])
         );
+    } else if let Some(matches) = matches.subcommand_matches("repl") {
+        let is_debug = matches.get_flag("debug");
+        let is_raw = matches.get_flag("raw");
+        if !matches.get_flag("nologo") {
+            println!("{:>start_width$}", Logo {});
+        } else {
+            println!("{:>start_width$}", SimpleLogo {});
+        }
+        println!(
+            "{:>start_width$} Type a dice expression to roll. Type {} to quit.",
+            "REPL".bold().bright_cyan(),
+            "exit".bold()
+        );
+
+        let seed = matches.get_one::<u64>("seed");
+        let mut rng: SmallRng = if let Some(seed) = seed {
+            if is_debug {
+                println!(
+                    "{:>start_width$} with seeded {}; Seed {}",
+                    "Starting".bold().bright_cyan(),
+                    "Small RNG".bold().bright_cyan(),
+                    seed.bold().bright_yellow(),
+                );
+            }
+            SmallRng::seed_from_u64(*seed)
+        } else {
+            SmallRng::from_entropy()
+        };
+
+        let mut rl = DefaultEditor::new().unwrap();
+        let prompt = format!("{} ", ">>".bold().bright_blue());
+        loop {
+            let line = match rl.readline(&prompt) {
+                Ok(line) => line,
+                Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
+                Err(e) => {
+                    eprintln!("{:>start_width$} {}", "Error".red().bold(), e);
+                    break;
+                }
+            };
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if line == "exit" || line == "quit" {
+                break;
+            }
+            rl.add_history_entry(line).ok();
+
+            let result = line.parse::<Dice>();
+            match result {
+                Ok(dice) => {
+                    if is_debug {
+                        println!(
+                            "{:>start_width$} {}",
+                            "Compiled".bold().yellow(),
+                            dice.bright_magenta()
+                        );
+                    }
+
+                    let output = if let Some(output) = dice.consteval() {
+                        if is_debug {
+                            println!(
+                                "{:>start_width$} consteval",
+                                "Notice".bold().bright_green()
+                            );
+                        }
+                        Some(output)
+                    } else {
+                        let result = dice.roll(
+                            &mut rng,
+                            RollOptions {
+                                include_line_details: is_debug,
+                            },
+                        );
+                        match result {
+                            Ok(result) => {
+                                if is_debug {
+                                    if let Some(middle_width) = result
+                                        .details
+                                        .iter()
+                                        .map(|line| line.operation.len())
+                                        .max()
+                                        .map(|w| w.max(15))
+                                    {
+                                        for line in result.details.iter() {
+                                            println!(
+                                                "{:>start_width$} {:middle_width$} => {}",
+                                                line.name.bold().bright_yellow(),
+                                                line.operation.bright_magenta(),
+                                                line.output
+                                            );
+                                        }
+                                    }
+                                }
+                                Some(result.output)
+                            }
+                            Err(err) => {
+                                eprintln!("{:>start_width$} {}", "Error".red().bold(), err);
+                                None
+                            }
+                        }
+                    };
+
+                    if let Some(output) = output {
+                        if is_raw {
+                            println!("{}", output.raw_string());
+                        } else {
+                            println!("{}", output.value());
+                        }
+                    }
+                }
+                Err(err) => {
+                    if is_debug {
+                        println!(
+                            "{:>start_width$} {}",
+                            "Error".red().bold(),
+                            err.formatted_error_string()
+                        );
+                    } else {
+                        println!("{}", err);
+                    }
+                }
+            }
+        }
     }
 }
 

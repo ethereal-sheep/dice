@@ -10,6 +10,57 @@ use num_bigint::BigUint;
 use owo_colors::OwoColorize;
 use rand::{rngs::SmallRng, SeedableRng};
 
+const SEED_ALPHABET: &[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+fn seed_to_string(mut seed: u64) -> String {
+    if seed == 0 {
+        return "0".to_string();
+    }
+    let mut chars = Vec::new();
+    while seed > 0 {
+        chars.push(SEED_ALPHABET[(seed % 36) as usize] as char);
+        seed /= 36;
+    }
+    chars.reverse();
+    chars.into_iter().collect()
+}
+
+fn parse_seed(s: &str) -> Result<u64, String> {
+    let s = s.to_lowercase();
+    let mut value: u64 = 0;
+    for c in s.chars() {
+        let digit = match c {
+            '0'..='9' => (c as u64) - ('0' as u64),
+            'a'..='z' => (c as u64) - ('a' as u64) + 10,
+            _ => return Err(format!("invalid character '{}' in seed", c.green())),
+        };
+        value = value
+            .checked_mul(36)
+            .and_then(|v| v.checked_add(digit))
+            .ok_or("seed value too large")?;
+    }
+    Ok(value)
+}
+
+fn print_seed(seed: u64, start_width: usize) {
+    println!(
+        "{:>start_width$} {} with '{}'",
+        "Seeding".bold().bright_cyan(),
+        "RNG".bold().bright_magenta(),
+        seed_to_string(seed).bold().blue(),
+    );
+}
+
+fn resolve_seed(matches: &clap::ArgMatches) -> u64 {
+    matches
+        .get_one::<String>("seed")
+        .map(|s| parse_seed(s).unwrap_or_else(|e| {
+            eprintln!("{} {}", "error:".bold().red(), e);
+            std::process::exit(1);
+        }))
+        .unwrap_or_else(rand::random)
+}
+
 pub fn main() {
     let matches = command!()
         .subcommand(
@@ -26,7 +77,7 @@ pub fn main() {
                     arg!(
                         --seed <SEED> "Seeds the PRNG with SEED"
                     )
-                    .value_parser(value_parser!(u64)),
+                    ,
                 )
                 .arg(arg!(
                     --raw "Prints a delimetered list of values if result is an array"
@@ -67,7 +118,7 @@ pub fn main() {
                     arg!(
                         --seed <SEED> "Seeds the PRNG with SEED"
                     )
-                    .value_parser(value_parser!(u64)),
+                    ,
                 )
                 .arg(
                     arg!(
@@ -105,7 +156,7 @@ pub fn main() {
                     arg!(
                         --seed <SEED> "Seeds the PRNG with SEED"
                     )
-                    .value_parser(value_parser!(u64)),
+                    ,
                 )
                 .arg(arg!(
                     --raw "Prints a delimetered list of values if result is an array"
@@ -150,27 +201,10 @@ pub fn main() {
                         );
                         Some(output)
                     } else {
-                        let seed = matches.get_one::<u64>("seed");
-                        let mut rng: SmallRng = if let Some(seed) = seed {
-                            SmallRng::seed_from_u64(*seed)
-                        } else {
-                            SmallRng::from_entropy()
-                        };
+                        let seed = resolve_seed(matches);
+                        let mut rng: SmallRng = SmallRng::seed_from_u64(seed);
                         if is_debug {
-                            if let Some(seed) = seed {
-                                println!(
-                                    "{:>start_width$} with seeded {}; Seed {}",
-                                    "Rolling".bold().bright_cyan(),
-                                    "Small RNG".bold().bright_cyan(),
-                                    seed.bold().bright_yellow(),
-                                );
-                            } else {
-                                println!(
-                                    "{:>start_width$} with {}",
-                                    "Rolling".bold().bright_cyan(),
-                                    "Small RNG".bold().bright_cyan()
-                                );
-                            }
+                            print_seed(seed, start_width);
                         }
                         let result = dice.roll(
                             &mut rng,
@@ -327,27 +361,10 @@ pub fn main() {
                             1000000
                         };
 
-                        let seed = matches.get_one::<u64>("seed");
-                        let mut rng = if let Some(seed) = seed {
-                            SmallRng::seed_from_u64(*seed)
-                        } else {
-                            SmallRng::from_entropy()
-                        };
+                        let seed = resolve_seed(matches);
+                        let mut rng = SmallRng::seed_from_u64(seed);
                         if is_debug {
-                            if let Some(seed) = seed {
-                                println!(
-                                    "{:>start_width$} with seeded {}; Seed {}",
-                                    "Testing".bold().bright_cyan(),
-                                    "Small RNG".bold().bright_cyan(),
-                                    seed.bold().bright_yellow(),
-                                );
-                            } else {
-                                println!(
-                                    "{:>start_width$} with {}",
-                                    "Testing".bold().bright_cyan(),
-                                    "Small RNG".bold().bright_cyan()
-                                );
-                            }
+                            print_seed(seed, start_width);
                         }
 
                         let middle_width = 15;
@@ -631,20 +648,11 @@ pub fn main() {
             "exit".bold()
         );
 
-        let seed = matches.get_one::<u64>("seed");
-        let mut rng: SmallRng = if let Some(seed) = seed {
-            if is_debug {
-                println!(
-                    "{:>start_width$} with seeded {}; Seed {}",
-                    "Starting".bold().bright_cyan(),
-                    "Small RNG".bold().bright_cyan(),
-                    seed.bold().bright_yellow(),
-                );
-            }
-            SmallRng::seed_from_u64(*seed)
-        } else {
-            SmallRng::from_entropy()
-        };
+        let seed = resolve_seed(matches);
+        if is_debug {
+            print_seed(seed, start_width);
+        }
+        let mut rng: SmallRng = SmallRng::seed_from_u64(seed);
 
         let mut rl = DefaultEditor::new().unwrap();
         let prompt = format!("{} ", ">>".bold().bright_blue());
@@ -679,10 +687,7 @@ pub fn main() {
 
                     let output = if let Some(output) = dice.consteval() {
                         if is_debug {
-                            println!(
-                                "{:>start_width$} consteval",
-                                "Notice".bold().bright_green()
-                            );
+                            println!("{:>start_width$} consteval", "Notice".bold().bright_green());
                         }
                         Some(output)
                     } else {

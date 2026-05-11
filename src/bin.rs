@@ -54,10 +54,12 @@ fn print_seed(seed: u64, start_width: usize) {
 fn resolve_seed(matches: &clap::ArgMatches) -> u64 {
     matches
         .get_one::<String>("seed")
-        .map(|s| parse_seed(s).unwrap_or_else(|e| {
-            eprintln!("{} {}", "error:".bold().red(), e);
-            std::process::exit(1);
-        }))
+        .map(|s| {
+            parse_seed(s).unwrap_or_else(|e| {
+                eprintln!("{} {}", "error:".bold().red(), e);
+                std::process::exit(1);
+            })
+        })
         .unwrap_or_else(rand::random)
 }
 
@@ -261,10 +263,18 @@ pub fn main() {
                     };
 
                     if let Some(result) = result {
-                        if is_raw {
-                            println!("{}", result.raw_string())
+                        if is_debug {
+                            if is_raw {
+                                println!("{:>start_width$} {}", "::".blue(), result.raw_string())
+                            } else {
+                                println!("{:>start_width$} {}", "::".blue(), result.value())
+                            }
                         } else {
-                            println!("{}", result.value())
+                            if is_raw {
+                                println!("{}", result.raw_string())
+                            } else {
+                                println!("{}", result.value())
+                            }
                         }
                     }
                 }
@@ -650,6 +660,19 @@ pub fn main() {
 
         let seed = resolve_seed(matches);
         if is_debug {
+            println!(
+                "{:>start_width$} Debug mode {}",
+                "Notice".bold().bright_green(),
+                "ON".bold().bright_yellow()
+            );
+
+            if is_raw {
+                println!(
+                    "{:>start_width$} Raw mode {}",
+                    "Notice".bold().bright_green(),
+                    "ON".bold().bright_yellow()
+                );
+            }
             print_seed(seed, start_width);
         }
         let mut rng: SmallRng = SmallRng::seed_from_u64(seed);
@@ -667,6 +690,14 @@ pub fn main() {
             };
             let line = line.trim();
             if line.is_empty() {
+                continue;
+            }
+            if line == "seed" {
+                println!(
+                    "{:>start_width$} {}",
+                    "?".blue(),
+                    seed_to_string(seed).bold().blue(),
+                );
                 continue;
             }
             if line == "exit" || line == "quit" {
@@ -687,7 +718,10 @@ pub fn main() {
 
                     let output = if let Some(output) = dice.consteval() {
                         if is_debug {
-                            println!("{:>start_width$} Script was evaluated at compile time", "Notice".bold().bright_green());
+                            println!(
+                                "{:>start_width$} Script was evaluated at compile time",
+                                "Notice".bold().bright_green()
+                            );
                         }
                         Some(output)
                     } else {
@@ -735,15 +769,11 @@ pub fn main() {
                     }
                 }
                 Err(err) => {
-                    if is_debug {
-                        println!(
-                            "{:>start_width$} {}",
-                            "Error".red().bold(),
-                            err.formatted_error_string()
-                        );
-                    } else {
-                        println!("{}", err);
-                    }
+                    println!(
+                        "{:>start_width$} {}",
+                        "Error".red().bold(),
+                        err.formatted_error_string()
+                    );
                 }
             }
         }

@@ -655,7 +655,7 @@ pub fn main() {
         let mut rng: SmallRng = SmallRng::seed_from_u64(seed);
 
         let mut rl = DefaultEditor::new().unwrap();
-        let prompt = format!("{} ", ">>".bold().bright_blue());
+        let prompt = format!("{:>start_width$} ", ">>".bold().bright_blue());
         loop {
             let line = match rl.readline(&prompt) {
                 Ok(line) => line,
@@ -687,7 +687,7 @@ pub fn main() {
 
                     let output = if let Some(output) = dice.consteval() {
                         if is_debug {
-                            println!("{:>start_width$} consteval", "Notice".bold().bright_green());
+                            println!("{:>start_width$} Script was evaluated at compile time", "Notice".bold().bright_green());
                         }
                         Some(output)
                     } else {
@@ -728,9 +728,9 @@ pub fn main() {
 
                     if let Some(output) = output {
                         if is_raw {
-                            println!("{}", output.raw_string());
+                            println!("{:>start_width$} {}", "::".blue(), output.raw_string());
                         } else {
-                            println!("{}", output.value());
+                            println!("{:>start_width$} {}", "::".blue(), output.value());
                         }
                     }
                 }

@@ -10,6 +10,8 @@ pub enum Token {
     Advantage(u64),
     Disadvantage(u64),
     Dice(u64, u64),
+    Explode(u64),
+    Implode(u64),
     Range(i64, i64),
     Pick(u64),
     Choose(u64),
@@ -90,6 +92,14 @@ static TOKENIZERS: &[MatchTokenFn] = &[
                     chars.next();
                     return Some(Token::Choose(value));
                 }
+                Some('x' | 'X') => {
+                    chars.next();
+                    return Some(Token::Explode(value));
+                }
+                Some('i' | 'I') => {
+                    chars.next();
+                    return Some(Token::Implode(value));
+                }
                 _ => {}
             }
             return Some(Token::Number(value));
@@ -158,6 +168,20 @@ static TOKENIZERS: &[MatchTokenFn] = &[
                 }
                 return Some(Token::Dice(1, rhs));
             }
+        }
+        None
+    },
+    |chars| {
+        // explode
+        if let Some('x' | 'X') = chars.next() {
+            return Some(Token::Explode(1));
+        }
+        None
+    },
+    |chars| {
+        // implode
+        if let Some('i' | 'I') = chars.next() {
+            return Some(Token::Implode(1));
         }
         None
     },
@@ -395,5 +419,55 @@ mod tests {
         assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), tokenizer.next());
         assert_eq!(tokenizer.peek(), None);
+    }
+
+    #[test]
+    fn test_tokenizer_explode() {
+        let mut tokenizer = Tokenizer::new("x6");
+        assert_eq!(tokenizer.next(), Some(Token::Explode(1)));
+        assert_eq!(tokenizer.next(), Some(Token::Number(6)));
+        assert_eq!(tokenizer.next(), None);
+
+        let mut tokenizer = Tokenizer::new("2x20");
+        assert_eq!(tokenizer.next(), Some(Token::Explode(2)));
+        assert_eq!(tokenizer.next(), Some(Token::Number(20)));
+        assert_eq!(tokenizer.next(), None);
+
+        let mut tokenizer = Tokenizer::new("x1..6");
+        assert_eq!(tokenizer.next(), Some(Token::Explode(1)));
+        assert_eq!(tokenizer.next(), Some(Token::Range(1, 6)));
+        assert_eq!(tokenizer.next(), None);
+
+        let mut tokenizer = Tokenizer::new("x6+d4");
+        assert_eq!(tokenizer.next(), Some(Token::Explode(1)));
+        assert_eq!(tokenizer.next(), Some(Token::Number(6)));
+        assert_eq!(tokenizer.next(), Some(Token::Plus));
+        assert_eq!(tokenizer.next(), Some(Token::Dice(1, 4)));
+        assert_eq!(tokenizer.next(), None);
+    }
+
+    #[test]
+    fn test_tokenizer_implode() {
+        let mut tokenizer = Tokenizer::new("i6");
+        assert_eq!(tokenizer.next(), Some(Token::Implode(1)));
+        assert_eq!(tokenizer.next(), Some(Token::Number(6)));
+        assert_eq!(tokenizer.next(), None);
+
+        let mut tokenizer = Tokenizer::new("2i20");
+        assert_eq!(tokenizer.next(), Some(Token::Implode(2)));
+        assert_eq!(tokenizer.next(), Some(Token::Number(20)));
+        assert_eq!(tokenizer.next(), None);
+
+        let mut tokenizer = Tokenizer::new("i1..6");
+        assert_eq!(tokenizer.next(), Some(Token::Implode(1)));
+        assert_eq!(tokenizer.next(), Some(Token::Range(1, 6)));
+        assert_eq!(tokenizer.next(), None);
+
+        let mut tokenizer = Tokenizer::new("i6+d4");
+        assert_eq!(tokenizer.next(), Some(Token::Implode(1)));
+        assert_eq!(tokenizer.next(), Some(Token::Number(6)));
+        assert_eq!(tokenizer.next(), Some(Token::Plus));
+        assert_eq!(tokenizer.next(), Some(Token::Dice(1, 4)));
+        assert_eq!(tokenizer.next(), None);
     }
 }

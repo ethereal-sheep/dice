@@ -810,6 +810,112 @@ impl GrammarRule {
         }
     }
 
+    fn exp(count: u64, start: i64, end: i64) -> Self {
+        let range_size = (end - start).unsigned_abs() + 1;
+        let max_val = start.max(end);
+        let min_val = start.min(end);
+        let exec_cap = (64.0 / (range_size as f64).log2()).ceil() as usize;
+        let display_cap = (20.0 / (range_size as f64).log2()).ceil() as usize;
+        Self::Generator {
+            name: "Exp",
+            size: count as usize,
+            search_space_size: BigUint::from_u64(range_size).unwrap().pow((count as u32) * (exec_cap as u32)),
+            step_count: count as usize * exec_cap,
+            exec: ExecFn::Random(
+                count as usize * exec_cap,
+                Box::new(move |rng| {
+                    let mut results: Vec<i64> = vec![];
+                    for _ in 0..count {
+                        let mut total: i64 = 0;
+                        let mut rolls = 0;
+                        loop {
+                            let x = rng.gen_range(min_val..=max_val);
+                            total += x;
+                            rolls += 1;
+                            if x < max_val || rolls >= exec_cap {
+                                break;
+                            }
+                        }
+                        results.push(total);
+                    }
+                    Ok(ExecOutput::Array(results))
+                }),
+            ),
+            to_string: Box::new(move || {
+                let prefix = if count == 1 { "".into() } else { count.to_string() };
+                if min_val == 1 {
+                    format!("{}X{}", prefix, max_val)
+                } else {
+                    format!("{}X({}..{})", prefix, start, end)
+                }
+            }),
+            min_max: Box::new(move || {
+                let (min, max) = if max_val > 0 {
+                    (min_val, max_val * (display_cap as i64 - 1) + (max_val - 1))
+                } else if max_val < 0 {
+                    (max_val * (display_cap as i64 - 1) + min_val, max_val - 1)
+                } else {
+                    (min_val, -1)
+                };
+                let new_size = count as usize;
+                Ok(MinMaxOutput::Array(vec![MinMax { min, max }; new_size]))
+            }),
+        }
+    }
+
+    fn imp(count: u64, start: i64, end: i64) -> Self {
+        let range_size = (end - start).unsigned_abs() + 1;
+        let max_val = start.max(end);
+        let min_val = start.min(end);
+        let exec_cap = (64.0 / (range_size as f64).log2()).ceil() as usize;
+        let display_cap = (20.0 / (range_size as f64).log2()).ceil() as usize;
+        Self::Generator {
+            name: "Imp",
+            size: count as usize,
+            search_space_size: BigUint::from_u64(range_size).unwrap().pow((count as u32) * (exec_cap as u32)),
+            step_count: count as usize * exec_cap,
+            exec: ExecFn::Random(
+                count as usize * exec_cap,
+                Box::new(move |rng| {
+                    let mut results: Vec<i64> = vec![];
+                    for _ in 0..count {
+                        let mut total: i64 = 0;
+                        let mut rolls = 0;
+                        loop {
+                            let x = rng.gen_range(min_val..=max_val);
+                            total += x;
+                            rolls += 1;
+                            if x > min_val || rolls >= exec_cap {
+                                break;
+                            }
+                        }
+                        results.push(total);
+                    }
+                    Ok(ExecOutput::Array(results))
+                }),
+            ),
+            to_string: Box::new(move || {
+                let prefix = if count == 1 { "".into() } else { count.to_string() };
+                if min_val == 1 {
+                    format!("{}I{}", prefix, max_val)
+                } else {
+                    format!("{}I({}..{})", prefix, start, end)
+                }
+            }),
+            min_max: Box::new(move || {
+                let (min, max) = if min_val > 0 {
+                    (min_val + 1, min_val * (display_cap as i64 - 1) + max_val)
+                } else if min_val < 0 {
+                    (min_val * (display_cap as i64 - 1) + (min_val + 1), max_val)
+                } else {
+                    (1, max_val)
+                };
+                let new_size = count as usize;
+                Ok(MinMaxOutput::Array(vec![MinMax { min, max }; new_size]))
+            }),
+        }
+    }
+
     fn neg(rhs: Self) -> Self {
         Self::UnaryNumber {
             name: "Neg",
@@ -1601,6 +1707,112 @@ fn primary(tokenizer: &mut Tokenizer, expected: &'static str) -> Result<GrammarR
             tokenizer.next();
             Ok(GrammarRule::die(lhs, rhs))
         }
+        Some(Token::Explode(lhs)) => {
+            tokenizer.next();
+            match tokenizer.peek() {
+                Some(Token::Number(rhs)) => {
+                    if rhs < 2 {
+                        return Err(GrammarError {
+                            error_type: GrammarErrorType::UnexpectedToken {
+                                token: Token::Number(rhs),
+                                expected: "Number >= 2",
+                            },
+                            error_index: tokenizer.expended_count(),
+                            error_length: tokenizer.peek_token_count(),
+                            input_string: tokenizer.input_str().into(),
+                        });
+                    }
+                    tokenizer.next();
+                    Ok(GrammarRule::exp(lhs, 1, rhs as i64))
+                }
+                Some(Token::Range(start, end)) => {
+                    let range_size = (end - start).unsigned_abs() + 1;
+                    if range_size < 2 {
+                        return Err(GrammarError {
+                            error_type: GrammarErrorType::UnexpectedToken {
+                                token: Token::Range(start, end),
+                                expected: "Range with at least 2 values",
+                            },
+                            error_index: tokenizer.expended_count(),
+                            error_length: tokenizer.peek_token_count(),
+                            input_string: tokenizer.input_str().into(),
+                        });
+                    }
+                    tokenizer.next();
+                    Ok(GrammarRule::exp(lhs, start, end))
+                }
+                Some(token) => Err(GrammarError {
+                    error_type: GrammarErrorType::UnexpectedToken {
+                        token,
+                        expected: "Number or Range",
+                    },
+                    error_index: tokenizer.expended_count(),
+                    error_length: tokenizer.peek_token_count(),
+                    input_string: tokenizer.input_str().into(),
+                }),
+                None => Err(GrammarError {
+                    error_type: GrammarErrorType::UnexpectedEnd {
+                        expected: "Number or Range",
+                    },
+                    error_index: tokenizer.expended_count(),
+                    error_length: 1,
+                    input_string: tokenizer.input_str().into(),
+                }),
+            }
+        }
+        Some(Token::Implode(lhs)) => {
+            tokenizer.next();
+            match tokenizer.peek() {
+                Some(Token::Number(rhs)) => {
+                    if rhs < 2 {
+                        return Err(GrammarError {
+                            error_type: GrammarErrorType::UnexpectedToken {
+                                token: Token::Number(rhs),
+                                expected: "Number >= 2",
+                            },
+                            error_index: tokenizer.expended_count(),
+                            error_length: tokenizer.peek_token_count(),
+                            input_string: tokenizer.input_str().into(),
+                        });
+                    }
+                    tokenizer.next();
+                    Ok(GrammarRule::imp(lhs, 1, rhs as i64))
+                }
+                Some(Token::Range(start, end)) => {
+                    let range_size = (end - start).unsigned_abs() + 1;
+                    if range_size < 2 {
+                        return Err(GrammarError {
+                            error_type: GrammarErrorType::UnexpectedToken {
+                                token: Token::Range(start, end),
+                                expected: "Range with at least 2 values",
+                            },
+                            error_index: tokenizer.expended_count(),
+                            error_length: tokenizer.peek_token_count(),
+                            input_string: tokenizer.input_str().into(),
+                        });
+                    }
+                    tokenizer.next();
+                    Ok(GrammarRule::imp(lhs, start, end))
+                }
+                Some(token) => Err(GrammarError {
+                    error_type: GrammarErrorType::UnexpectedToken {
+                        token,
+                        expected: "Number or Range",
+                    },
+                    error_index: tokenizer.expended_count(),
+                    error_length: tokenizer.peek_token_count(),
+                    input_string: tokenizer.input_str().into(),
+                }),
+                None => Err(GrammarError {
+                    error_type: GrammarErrorType::UnexpectedEnd {
+                        expected: "Number or Range",
+                    },
+                    error_index: tokenizer.expended_count(),
+                    error_length: 1,
+                    input_string: tokenizer.input_str().into(),
+                }),
+            }
+        }
         Some(Token::Advantage(lhs)) => {
             tokenizer.next();
             let expended_count_before = tokenizer.expended_count();
@@ -2263,5 +2475,241 @@ mod tests {
         let rule = parse(x);
         assert!(rule.consteval().is_some());
         assert_eq!(rule.consteval().unwrap().value(), 6);
+    }
+
+    #[test]
+    fn test_explode_min_max() {
+        let x = "x6";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 1);
+        assert!(grammar.max() > 6);
+
+        let x = "2x20";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 2);
+        assert!(grammar.max() > 40);
+    }
+
+    #[test]
+    fn test_explode_variable_count() {
+        let x = "x6";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert!(grammar.variable_count() > 0);
+    }
+
+    #[test]
+    fn test_explode_not_consteval() {
+        let x = "x6";
+        let rule = parse(x);
+        assert!(rule.consteval().is_none());
+
+        let x = "2x20";
+        let rule = parse(x);
+        assert!(rule.consteval().is_none());
+    }
+
+    #[test]
+    fn test_explode_seeded() {
+        use rand::{rngs::SmallRng, SeedableRng};
+        let x = "x6";
+        let grammar = Grammar::parse(x).unwrap();
+        let mut rng = SmallRng::seed_from_u64(42);
+        let result = grammar.exec(
+            &mut rng,
+            crate::RollOptions {
+                include_line_details: false,
+            },
+        );
+        let value = result.unwrap().output.value();
+        assert!(value >= 1);
+    }
+
+    #[test]
+    fn test_explode_output_size() {
+        let x = "3x6";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 3);
+
+        let x = "x20";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 1);
+    }
+
+    #[test]
+    fn test_explode_range_min_max() {
+        let x = "x1..6";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 1);
+        assert!(grammar.max() > 6);
+
+        let x = "x-2..5";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), -2);
+        assert!(grammar.max() > 5);
+
+        let x = "2x1..6";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 2);
+        assert!(grammar.max() > 12);
+    }
+
+    #[test]
+    fn test_explode_range_output_size() {
+        let x = "x1..6";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 1);
+
+        let x = "3x-2..5";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 3);
+    }
+
+    #[test]
+    fn test_explode_range_not_consteval() {
+        let x = "x1..6";
+        let rule = parse(x);
+        assert!(rule.consteval().is_none());
+
+        let x = "x-2..5";
+        let rule = parse(x);
+        assert!(rule.consteval().is_none());
+    }
+
+    #[test]
+    fn test_explode_range_seeded() {
+        use rand::{rngs::SmallRng, SeedableRng};
+        let x = "x1..6";
+        let grammar = Grammar::parse(x).unwrap();
+        let mut rng = SmallRng::seed_from_u64(42);
+        let result = grammar.exec(
+            &mut rng,
+            crate::RollOptions {
+                include_line_details: false,
+            },
+        );
+        let value = result.unwrap().output.value();
+        assert!(value >= 1);
+
+        let x = "x-2..5";
+        let grammar = Grammar::parse(x).unwrap();
+        let mut rng = SmallRng::seed_from_u64(42);
+        let result = grammar.exec(
+            &mut rng,
+            crate::RollOptions {
+                include_line_details: false,
+            },
+        );
+        let value = result.unwrap().output.value();
+        assert!(value >= -2);
+    }
+
+    #[test]
+    fn test_explode_rejects_x1() {
+        let x = "x1";
+        let result = Grammar::parse(x);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_explode_rejects_single_value_range() {
+        let x = "x5..5";
+        let result = Grammar::parse(x);
+        assert!(result.is_err());
+
+        let x = "x-3..-3";
+        let result = Grammar::parse(x);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_implode_min_max() {
+        let x = "i6";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 2);
+        assert!(grammar.max() > 6);
+
+        let x = "2i20";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 4);
+        assert!(grammar.max() > 40);
+    }
+
+    #[test]
+    fn test_implode_range_min_max() {
+        let x = "i1..6";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 2);
+        assert!(grammar.max() > 6);
+
+        let x = "i-2..5";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert!(grammar.min() < -2);
+        assert_eq!(grammar.max(), 5);
+    }
+
+    #[test]
+    fn test_implode_output_size() {
+        let x = "3i6";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 3);
+
+        let x = "i20";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 1);
+    }
+
+    #[test]
+    fn test_implode_not_consteval() {
+        let x = "i6";
+        let rule = parse(x);
+        assert!(rule.consteval().is_none());
+
+        let x = "i1..6";
+        let rule = parse(x);
+        assert!(rule.consteval().is_none());
+    }
+
+    #[test]
+    fn test_implode_seeded() {
+        use rand::{rngs::SmallRng, SeedableRng};
+        let x = "i6";
+        let grammar = Grammar::parse(x).unwrap();
+        let mut rng = SmallRng::seed_from_u64(42);
+        let result = grammar.exec(
+            &mut rng,
+            crate::RollOptions {
+                include_line_details: false,
+            },
+        );
+        let value = result.unwrap().output.value();
+        assert!(value >= 2);
+    }
+
+    #[test]
+    fn test_implode_rejects_i1() {
+        let x = "i1";
+        let result = Grammar::parse(x);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_implode_rejects_single_value_range() {
+        let x = "i5..5";
+        let result = Grammar::parse(x);
+        assert!(result.is_err());
+
+        let x = "i-3..-3";
+        let result = Grammar::parse(x);
+        assert!(result.is_err());
     }
 }

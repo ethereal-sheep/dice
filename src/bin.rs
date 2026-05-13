@@ -632,6 +632,34 @@ pub fn main() {
                     ]
                 ),
                 (
+                    "EXPLODE",
+                    &[
+                        Content::subheader("Keyword", "x/X"),
+                        Content::subheader("Usage", "<COUNT?>X<NUM> => ARR"),
+                        Content::paragraph("or <COUNT?>X<RANGE> => ARR"),
+                        Content::paragraph("where NUM >= 2 or RANGE has at least 2 values"),
+                        Content::subheader("Example", "x6, 2X20, x1..6, x-2..5"),
+                        Content::subheader(
+                            "Desc.",
+                            "Rolls a value in the range and sums. If the maximum value is \nrolled, rolls again and adds to the total. Repeats until a \nnon-maximum value is rolled."
+                        ),
+                    ]
+                ),
+                (
+                    "IMPLODE",
+                    &[
+                        Content::subheader("Keyword", "i/I"),
+                        Content::subheader("Usage", "<COUNT?>I<NUM> => ARR"),
+                        Content::paragraph("or <COUNT?>I<RANGE> => ARR"),
+                        Content::paragraph("where NUM >= 2 or RANGE has at least 2 values"),
+                        Content::subheader("Example", "i6, 2I20, i1..6, i-2..5"),
+                        Content::subheader(
+                            "Desc.",
+                            "Rolls a value in the range and sums. If the minimum value is \nrolled, rolls again and adds to the total. Repeats until a \nnon-minimum value is rolled."
+                        ),
+                    ]
+                ),
+                (
                     "SELECT",
                     &[
                         Content::subheader("Usage", "[<ARR>|<INDICES>] => ARR"),

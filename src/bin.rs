@@ -7,7 +7,7 @@ use std::{cell::RefCell, cmp::Ordering, collections::BTreeMap, rc::Rc};
 use clap::{arg, command, value_parser, Command};
 use dice::{Dice, ExecOutput, OperationTestInfo, OverallTestInfo, RollOptions, TestOptions};
 use num_bigint::BigUint;
-use owo_colors::OwoColorize;
+use owo_colors::{AnsiColors, OwoColorize};
 use rand::{rngs::SmallRng, SeedableRng};
 
 const SEED_ALPHABET: &[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -869,36 +869,64 @@ fn big_uint_to_scientific(
     format!("{:.precision$}e+{}", value, exp)
 }
 
+fn random_logo_colors() -> (AnsiColors, AnsiColors) {
+    use rand::seq::SliceRandom;
+    use AnsiColors::*;
+
+    const COLORS: &[AnsiColors] = &[
+        BrightRed, BrightGreen, BrightYellow, BrightBlue, BrightMagenta, BrightCyan,
+    ];
+
+    const LOW_CONTRAST: &[(AnsiColors, AnsiColors)] = &[
+        (BrightGreen, BrightYellow),
+        (BrightBlue, BrightCyan),
+        (BrightBlue, BrightGreen),
+        (BrightCyan, BrightGreen),
+        (BrightRed, BrightMagenta),
+    ];
+
+    fn is_low_contrast(a: AnsiColors, b: AnsiColors) -> bool {
+        LOW_CONTRAST
+            .iter()
+            .any(|&(x, y)| (a == x && b == y) || (a == y && b == x))
+    }
+
+    let mut rng = rand::thread_rng();
+    let word = *COLORS.choose(&mut rng).unwrap();
+    let art = **COLORS
+        .iter()
+        .filter(|c| **c != word && !is_low_contrast(word, **c))
+        .collect::<Vec<_>>()
+        .choose(&mut rng)
+        .unwrap();
+    (word, art)
+}
+
 struct Logo;
 
 impl fmt::Display for Logo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let width = f.width().unwrap_or(0);
+        let (word, art) = random_logo_colors();
 
-        // let logo_a = r"     _ _      _____  _____  ";
-        // let logo_b = r"  __| (_) ___/___ /\/\  . \ ";
-        // let logo_c = r" / _` | |/ __/ _ \ /..\____\";
-        // let logo_d = r"| (_| | | (_|  __/ \  /'  '/";
-        // let logo_e = r" \__,_|_|\___\___|\/\/'__'/ ";
+        let logo_a1 = format!("{}", r"     _ _      ".color(word));
+        let logo_a2 = format!("{}", r"_____  _____  ".color(art));
 
-        let logo_a1 = r"     _ _      ".bright_magenta();
-        let logo_a2 = r"_____  _____  ";
+        let logo_b1 = format!("{}", r"  __| (_) ___".color(word));
+        let logo_b2 = format!("{}", r"/".color(art));
+        let logo_b3 = format!("{}", r"___ ".color(word));
+        let logo_b4 = format!("{}", r"/\/\  . \ ".color(art));
 
-        let logo_b1 = r"  __| (_) ___".bright_magenta();
-        let logo_b2 = r"/";
-        let logo_b3 = r"___ ".bright_magenta();
-        let logo_b4 = r"/\/\  . \ ";
+        let logo_c1 = format!("{}", r" / _` | |/ __/ _ \".color(word));
+        let logo_c2 = format!("{}", r" /..\____\".color(art));
 
-        let logo_c1 = r" / _` | |/ __/ _ \".bright_magenta();
-        let logo_c2 = r" /..\____\";
+        let logo_d1 = format!("{}", r"| (_| | | (_|  __/".color(word));
+        let logo_d2 = format!("{}", r" \  /'  '/".color(art));
 
-        let logo_d1 = r"| (_| | | (_|  __/".bright_magenta();
-        let logo_d2 = r" \  /'  '/";
+        let logo_e1 = format!("{}", r" \__,_|_|\___\___|".color(word));
+        let logo_e2 = format!("{}", r"\/\/'__'/ ".color(art));
 
-        let logo_e1 = r" \__,_|_|\___\___|".bright_magenta();
-        let logo_e2 = r"\/\/'__'/ ";
-
-        writeln!(f, "{:>width$}", "".bold().bright_blue())?;
+        writeln!(f, "{:>width$}", "")?;
         writeln!(f, "{:width$}{logo_a1}{logo_a2}", "")?;
         writeln!(f, "{:width$}{logo_b1}{logo_b2}{logo_b3}{logo_b4}", "")?;
         writeln!(f, "{:width$}{logo_c1}{logo_c2}", "")?;
@@ -915,12 +943,13 @@ struct SimpleLogo;
 
 impl fmt::Display for SimpleLogo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let width = f.width().unwrap_or(0);
+        let (word, _) = random_logo_colors();
         write!(
             f,
             "{:>width$} v{}",
-            "Dice".bright_blue().bold(),
-            env!("CARGO_PKG_VERSION").bold()
+            "Dice".color(word).bold(),
+            env!("CARGO_PKG_VERSION").bold(),
+            width = f.width().unwrap_or(0)
         )
     }
 }

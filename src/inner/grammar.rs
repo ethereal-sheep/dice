@@ -819,7 +819,9 @@ impl GrammarRule {
         Self::Generator {
             name: "Exp",
             size: count as usize,
-            search_space_size: BigUint::from_u64(range_size).unwrap().pow((count as u32) * (exec_cap as u32)),
+            search_space_size: BigUint::from_u64(range_size)
+                .unwrap()
+                .pow((count as u32) * (exec_cap as u32)),
             step_count: count as usize * exec_cap,
             exec: ExecFn::Random(
                 count as usize * exec_cap,
@@ -842,7 +844,11 @@ impl GrammarRule {
                 }),
             ),
             to_string: Box::new(move || {
-                let prefix = if count == 1 { "".into() } else { count.to_string() };
+                let prefix = if count == 1 {
+                    "".into()
+                } else {
+                    count.to_string()
+                };
                 if min_val == 1 {
                     format!("{}X{}", prefix, max_val)
                 } else {
@@ -872,7 +878,9 @@ impl GrammarRule {
         Self::Generator {
             name: "Imp",
             size: count as usize,
-            search_space_size: BigUint::from_u64(range_size).unwrap().pow((count as u32) * (exec_cap as u32)),
+            search_space_size: BigUint::from_u64(range_size)
+                .unwrap()
+                .pow((count as u32) * (exec_cap as u32)),
             step_count: count as usize * exec_cap,
             exec: ExecFn::Random(
                 count as usize * exec_cap,
@@ -895,7 +903,11 @@ impl GrammarRule {
                 }),
             ),
             to_string: Box::new(move || {
-                let prefix = if count == 1 { "".into() } else { count.to_string() };
+                let prefix = if count == 1 {
+                    "".into()
+                } else {
+                    count.to_string()
+                };
                 if min_val == 1 {
                     format!("{}I{}", prefix, max_val)
                 } else {
@@ -1520,11 +1532,49 @@ fn negative(tokenizer: &mut Tokenizer) -> Result<GrammarRule, GrammarError> {
 
 /**
  * Any
- *    = Number / Primary
+ *    = Number "{" Expression "}" / Number / Primary
  */
 fn any(tokenizer: &mut Tokenizer) -> Result<GrammarRule, GrammarError> {
     if let Some(Token::Number(n)) = tokenizer.peek() {
         tokenizer.next();
+        if let Some(Token::LeftCurlyBracket) = tokenizer.peek() {
+            tokenizer.next();
+            let inner_start = tokenizer.expended_count();
+            let _ = expression(tokenizer)?;
+            let inner_end = tokenizer.expended_count();
+            match tokenizer.peek() {
+                Some(Token::RightCurlyBracket) => {
+                    tokenizer.next();
+                }
+                Some(token) => {
+                    return Err(GrammarError {
+                        error_type: GrammarErrorType::UnexpectedToken {
+                            token,
+                            expected: "'}'",
+                        },
+                        error_index: tokenizer.expended_count(),
+                        error_length: tokenizer.peek_token_count(),
+                        input_string: tokenizer.input_str().into(),
+                    });
+                }
+                None => {
+                    return Err(GrammarError {
+                        error_type: GrammarErrorType::UnexpectedEnd { expected: "'}'" },
+                        error_index: tokenizer.expended_count(),
+                        error_length: 1,
+                        input_string: tokenizer.input_str().into(),
+                    });
+                }
+            }
+            let inner_str = &tokenizer.input_str()[inner_start..inner_end];
+            let children = (0..n)
+                .map(|_| {
+                    let mut inner_tokenizer = Tokenizer::new(inner_str);
+                    expression(&mut inner_tokenizer)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(GrammarRule::arr(children));
+        }
         return Ok(GrammarRule::num(n));
     }
     primary(tokenizer, "Expression")
@@ -2128,9 +2178,7 @@ impl Grammar {
                             let (output, _) = (stack_fn.exec)(stack, &mut rng, &exec_options)?;
                             stack.push(output);
                             sender
-                                .send(LineTaskCompleted {
-                                    operation_index: j,
-                                })
+                                .send(LineTaskCompleted { operation_index: j })
                                 .map_err(|e| e.to_string())?;
                         }
                     }
@@ -2711,5 +2759,62 @@ mod tests {
         let x = "i-3..-3";
         let result = Grammar::parse(x);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_repeat_output_size() {
+        let x = "3{d6}";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 3);
+
+        let x = "5{d20+1}";
+        let rule = parse(x);
+        assert_eq!(rule.len(), 5);
+    }
+
+    #[test]
+    fn test_repeat_min_max() {
+        let x = "3{d6}";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 3);
+        assert_eq!(grammar.max(), 18);
+
+        let x = "2{d20+5}";
+        let result = Grammar::parse(x);
+        let grammar = result.unwrap();
+        assert_eq!(grammar.min(), 12);
+        assert_eq!(grammar.max(), 50);
+    }
+
+    #[test]
+    fn test_repeat_not_consteval() {
+        let x = "3{d6}";
+        let rule = parse(x);
+        assert!(rule.consteval().is_none());
+    }
+
+    #[test]
+    fn test_repeat_consteval() {
+        let x = "3{5+1}";
+        let rule = parse(x);
+        let output = rule.consteval().unwrap();
+        assert_matches!(output, ExecOutput::Array(arr) if arr == vec![6, 6, 6]);
+    }
+
+    #[test]
+    fn test_repeat_seeded() {
+        use rand::{rngs::SmallRng, SeedableRng};
+        let x = "3{d6}";
+        let grammar = Grammar::parse(x).unwrap();
+        let mut rng = SmallRng::seed_from_u64(42);
+        let result = grammar.exec(
+            &mut rng,
+            crate::RollOptions {
+                include_line_details: false,
+            },
+        );
+        let output = result.unwrap().output;
+        assert_matches!(output, ExecOutput::Array(ref arr) if arr.len() == 3);
     }
 }

@@ -660,6 +660,17 @@ pub fn main() {
                     ]
                 ),
                 (
+                    "REPEAT",
+                    &[
+                        Content::subheader("Usage", "<NUM>{<EXPRESSION>} => ARR"),
+                        Content::subheader("Example", "3{d6}, 2{d20+5}, 4{x6}"),
+                        Content::subheader(
+                            "Desc.",
+                            "Evaluates EXPRESSION NUM times independently, returning an \narray of the summed results of each evaluation."
+                        ),
+                    ]
+                ),
+                (
                     "SELECT",
                     &[
                         Content::subheader("Usage", "[<ARR>|<INDICES>] => ARR"),

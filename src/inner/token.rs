@@ -17,6 +17,8 @@ pub enum Token {
     Choose(u64),
     LeftParenthesis,
     RightParenthesis,
+    LeftCurlyBracket,
+    RightCurlyBracket,
     Comma,
     LeftSquareBracket,
     RightSquareBracket,
@@ -196,6 +198,20 @@ static TOKENIZERS: &[MatchTokenFn] = &[
         // right parenthesis
         if let Some(')') = chars.next() {
             return Some(Token::RightParenthesis);
+        }
+        None
+    },
+    |chars| {
+        // left curly bracket
+        if let Some('{') = chars.next() {
+            return Some(Token::LeftCurlyBracket);
+        }
+        None
+    },
+    |chars| {
+        // right curly bracket
+        if let Some('}') = chars.next() {
+            return Some(Token::RightCurlyBracket);
         }
         None
     },
